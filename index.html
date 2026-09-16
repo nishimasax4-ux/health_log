@@ -61,6 +61,11 @@
     max-width: 100%; min-width: 0;
   }
   input:focus, select:focus, textarea:focus { outline: none; border-color: var(--slate); }
+  /* iOSのSafariは type="date" の内部レイアウトにCSSのwidth:100%を無視して
+     広めの固有サイズを取ることがあり、カードの右端からはみ出す原因になる。
+     ネイティブの見た目(chrome)を外すと、通常のinputと同じくwidth:100%に
+     従うようになる(タップしたときのカレンダー選択UIそのものは変わらない)。 */
+  input[type="date"] { -webkit-appearance: none; appearance: none; }
   button { cursor: pointer; font-family: inherit; border: none; transition: transform 0.1s ease, opacity 0.1s ease, filter 0.1s ease; }
   button:active, .cal-cell:active { transform: scale(0.94); opacity: 0.8; }
   .btn-primary:active, .chip:active, .sub-tab-btn:active, .btn-icon:active, .icon-btn:active { filter: brightness(0.92); }
@@ -161,7 +166,7 @@ const WORKER_URL = "https://health-log-ai.nishimasax4.workers.dev";
 const WORKER_TOKEN = "hS4%IpejF6842XppRBJz";
 function workerConfigured() { return !!WORKER_URL; }
 // アプリのバージョン番号。更新のたびに増やし、設定タブ下部に表示します。
-const APP_VERSION = "v1.0";
+const APP_VERSION = "v1.1";
 
 const STORAGE_KEY = "health-log-data";
 const PARTS = ["胸","背中","脚","肩","腕","腹筋"];
@@ -277,7 +282,7 @@ const DEFAULT_LIFESTYLE = "デスクワーク中心";
 let entries = [];
 let weightEntries = [];
 let mealEntries = [];
-let goals = { weight: 65, weeklyFreq: 3, paceKgPerWeek: 0.5 };
+let goals = { weight: 65, weeklyFreq: 3, paceKgPerWeek: 0.5, goalType: "weight" };
 let profile = null; // null until onboarding completes: {age, gender, height, lifestyle}
 let moodByDate = {};
 let exerciseMaster = []; // {id, part, name} - user-editable list of gym machines/exercises per body part
@@ -1175,6 +1180,25 @@ function currentPace() {
   const p = Number(goals.paceKgPerWeek);
   return PACE_OPTIONS.some(o => o.value === p) ? p : DEFAULT_PACE;
 }
+// 目標の種類(v47)。以前は「体重目標との差」から減量/増量を自動判定するだけで、
+// 筋力アップ目的の人にも「減量ペース/増量ペース」という体重変化前提のUIしか
+// 出せなかった(筋力アップしたい人は、体重を大きく変えるつもりがないことが多く、
+// この「ペース」を設定する必要がない)。ここで目標の種類を明示的に選べるようにし、
+// 「現状維持」「筋力アップ」では体重目標欄のペース設定を使わず、固定の考え方で
+// 目安カロリー・たんぱく質・アドバイスを決める。
+const GOAL_TYPES = [
+  { value: "weight",   label: "体重を変えたい" },
+  { value: "maintain", label: "現状維持" },
+  { value: "muscle",   label: "筋力アップ" },
+];
+const DEFAULT_GOAL_TYPE = "weight";
+function currentGoalType() {
+  const g = goals.goalType;
+  return GOAL_TYPES.some(o => o.value === g) ? g : DEFAULT_GOAL_TYPE;
+}
+// 「筋力アップ」時の1日あたりの黒字(kcal)。体重目標のペースのような可変値では
+// なく、体脂肪を増やしすぎない範囲の固定値にしている(リーンバルクの目安)。
+const MUSCLE_SURPLUS = 200;
 // 目標体重まで、あと何kgかを返す(v46.14)。目標体重が現在より重ければ増量、
 // 軽ければ減量のどちらでも同じ考え方で使えるよう、常に差の絶対値を返す
 // (以前は「現在−目標」がプラスのときだけを「残り」として扱っていたため、
@@ -1248,15 +1272,24 @@ function computeTargets(p, weight, goalWeight) {
   // 運動ぶんを含まない土台(基礎代謝 × 日常生活の活動量)。運動の消費は記録から
   // 実測ぶんだけを別途上乗せする(LIFESTYLE_FACTOR の説明を参照)。
   const tdee = bmr * (LIFESTYLE_FACTOR[p.lifestyle] || LIFESTYLE_FACTOR[DEFAULT_LIFESTYLE]);
-  const goal = (goalWeight != null && goalWeight > 0) ? goalWeight : weight;
+  const goalType = currentGoalType();
+  const rawGoal = (goalWeight != null && goalWeight > 0) ? goalWeight : weight;
+  // 「現状維持」「筋力アップ」は体重目標欄の値ではなく、常に今の体重を基準にする
+  // (体重目標との差でペースを決める考え方を使わないため)。
+  const goal = (goalType === "maintain" || goalType === "muscle") ? weight : rawGoal;
   const diff = weight - goal;
 
   const pace = currentPace();
-  const direction = diff > 0.5 ? "loss" : diff < -0.5 ? "gain" : "keep";
+  let direction;
+  if (goalType === "maintain") direction = "keep";
+  else if (goalType === "muscle") direction = "muscle";
+  else direction = diff > 0.5 ? "loss" : diff < -0.5 ? "gain" : "keep";
   // 目標に向けて1日あたり必要なエネルギーの過不足(プラス=減らしたい量)。
-  // 増量方向も設定タブで選んだ同じペースを使う(v46.14)。
+  // 増量方向も設定タブで選んだ同じペースを使う(v46.14)。筋力アップは体重目標の
+  // ペースを使わず、MUSCLE_SURPLUSの固定の黒字を使う(v47)。
   const needDeficit = direction === "loss" ? Math.round(pace * FAT_KCAL_PER_KG / 7)
                     : direction === "gain" ? -Math.round(pace * FAT_KCAL_PER_KG / 7)
+                    : direction === "muscle" ? -MUSCLE_SURPLUS
                     : 0;
 
   // 安全のための下限。基礎代謝を下回る食事量を目標として提示しない。
@@ -1277,11 +1310,13 @@ function computeTargets(p, weight, goalWeight) {
   if (gapByExercise < 30) gapByExercise = 0;
 
   // --- PFC ---
-  // たんぱく質。体脂肪率が分かっていれば除脂肪体重×2.0g、分からなければ従来どおり
-  // 目標体重×1.6g。脂肪組織はたんぱく質をほとんど必要としないので、体組成が分かる
+  // たんぱく質。体脂肪率が分かっていれば除脂肪体重×係数、分からなければ従来どおり
+  // 目標体重×係数。脂肪組織はたんぱく質をほとんど必要としないので、体組成が分かる
   // なら除脂肪体重を基準にするほうが理にかなっている(体脂肪率が平均的な人では
-  // どちらもほぼ同じ値になる)。
-  let targetProtein = leanMass != null ? Math.round(leanMass * 2.0) : Math.round(goal * 1.6);
+  // どちらもほぼ同じ値になる)。筋力アップは通常より少し多めの係数を使う(v47)。
+  const proteinFactorLean = direction === "muscle" ? 2.2 : 2.0;
+  const proteinFactorWeight = direction === "muscle" ? 1.8 : 1.6;
+  let targetProtein = leanMass != null ? Math.round(leanMass * proteinFactorLean) : Math.round(goal * proteinFactorWeight);
   // 脂質は目安カロリーの25%を基本に、ホルモン等のため目標体重×0.8gを下限とする。
   // ただし上限は30%(食事摂取基準の目標量の上限)に収める——総カロリーが低いと
   // 下限側だけを見て30%を超えてしまうため。上限が0.6g/kgを割る場合はそちらを優先する。
@@ -1304,8 +1339,9 @@ function computeTargets(p, weight, goalWeight) {
     bmr: Math.round(bmr), tdee: Math.round(tdee), targetCalories,
     targetProtein, targetFat, targetCarb,
     // 画面で「なぜこの数字なのか」を説明するための内訳
-    pace, direction, needDeficit, actualDeficit, gapByExercise, floored,
+    pace, direction, goalType, needDeficit, actualDeficit, gapByExercise, floored,
     floor: Math.round(floor), goalWeight: goal,
+    proteinFactor: leanMass != null ? proteinFactorLean : proteinFactorWeight,
     // 体組成まわり(画面で「どの式で計算したか」を示すために使う)
     bmrMethod, bodyFat,
     leanMass: leanMass != null ? Math.round(leanMass * 10) / 10 : null,
@@ -1499,7 +1535,7 @@ function waistCardHtml() {
 // 以前は目標値だけが出ていたため、下限で頭打ちになっていることに気づけなかった。
 function calorieTargetBreakdownHtml(t) {
   const mp = macroPercents(t);
-  const dirLabel = t.direction === "loss" ? "減量" : t.direction === "gain" ? "増量" : "維持";
+  const dirLabel = t.direction === "loss" ? "減量" : t.direction === "gain" ? "増量" : t.direction === "muscle" ? "筋力アップ" : "維持";
   const line = (label, value, note) => `
     <div class="between" style="margin-bottom:5px;">
       <span style="font-size:12px;">${label}${note ? ` <span class="muted" style="font-size:10.5px;">${note}</span>` : ""}</span>
@@ -1524,9 +1560,11 @@ function calorieTargetBreakdownHtml(t) {
         ? `<p class="muted" style="font-size:10.5px;margin:-2px 0 8px;line-height:1.6;">からだタブで体脂肪率も記録すると、体組成から計算する式に切り替わります。</p>` : "")}
     ${line("基礎消費", `${t.tdee} kcal`, "(基礎代謝 × 日常生活の活動量)")}
     ${t.needDeficit !== 0 ? line(
-        t.direction === "loss" ? "目標ペースに必要な赤字" : "目標ペースに必要な黒字",
+        t.direction === "loss" ? "目標ペースに必要な赤字"
+      : t.direction === "muscle" ? "筋力アップに必要な黒字"
+      : "目標ペースに必要な黒字",
         `${Math.abs(t.needDeficit)} kcal/日`,
-        `(${dirLabel} ${t.pace}kg/週)`) : ""}
+        t.direction === "muscle" ? "(筋力アップ設定・固定の黒字)" : `(${dirLabel} ${t.pace}kg/週)`) : ""}
     <div class="between" style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px;">
       <span style="font-size:12.5px;font-weight:700;">1日の目安カロリー</span>
       <span class="mono" style="font-size:16px;font-weight:700;">${t.targetCalories} kcal</span>
@@ -1535,11 +1573,13 @@ function calorieTargetBreakdownHtml(t) {
     <div style="background:#FDF1E7;border-radius:8px;padding:10px;margin-top:10px;">
       <p style="font-size:11.5px;margin:0;line-height:1.7;">⚠️ 安全のため、目安カロリーが<b>基礎代謝(${t.bmr}kcal)を下回らないところで止めています。</b>そのため食事だけで作れる赤字は <span class="mono">${t.actualDeficit}</span>kcal/日で、目標ペースには <b><span class="mono">${t.gapByExercise}</span>kcal/日ぶん足りません</b>。この分は運動で補う想定です(運動した日は、その消費がまずこの不足分の穴埋めに使われ、<b><span class="mono">${t.gapByExercise}</span>kcalを超えたぶんだけ</b>目標カロリーに上乗せされます)。ペースを「ゆっくり」に変えると、食事だけでも届くようになります。</p>
     </div>` : `
-    <p class="muted" style="font-size:10.5px;margin:8px 0 0;line-height:1.6;">食事だけで目標ペースに必要な${t.direction === "gain" ? "黒字" : "赤字"}(${Math.abs(t.actualDeficit)}kcal/日)を作れる計算です。運動した日は、その消費ぶんが目標カロリーに上乗せされます。</p>`}
+    <p class="muted" style="font-size:10.5px;margin:8px 0 0;line-height:1.6;">${t.direction === "muscle"
+      ? `食事だけで筋力アップに必要な黒字(${Math.abs(t.actualDeficit)}kcal/日)を作れる計算です。運動した日は、その消費ぶんが目標カロリーに上乗せされます。`
+      : `食事だけで目標ペースに必要な${t.direction === "gain" ? "黒字" : "赤字"}(${Math.abs(t.actualDeficit)}kcal/日)を作れる計算です。運動した日は、その消費ぶんが目標カロリーに上乗せされます。`}</p>`}
 
     <p class="section-title" style="margin:16px 0 8px;">栄養素の目標</p>
     ${line("たんぱく質", `${t.targetProtein} g`, t.leanMass != null
-        ? `(除脂肪体重${t.leanMass}kg × 2.0g)` : `(目標体重${t.goalWeight}kg × 1.6g)`)}
+        ? `(除脂肪体重${t.leanMass}kg × ${t.proteinFactor}g)` : `(目標体重${t.goalWeight}kg × ${t.proteinFactor}g)`)}
     ${line("脂質", `${t.targetFat} g`, "(目安カロリーの25%・下限あり)")}
     ${line("炭水化物", `${t.targetCarb} g`, "(残り)")}
     ${mp ? `
@@ -1550,7 +1590,12 @@ function calorieTargetBreakdownHtml(t) {
         脂質 ${mp.fat}% <span class="muted">/ 基準 20〜30%</span> ${badge(inRange(mp.fat, 20, 30))}<br>
         炭水化物 ${mp.carb}% <span class="muted">/ 基準 50〜65%</span> ${badge(inRange(mp.carb, 50, 65))}
       </p>
-      <p class="muted" style="font-size:10.5px;margin:6px 0 0;line-height:1.6;">たんぱく質が基準の上限を超えるのは、この目標が${t.direction === "gain" ? "<b>増量中に効率よく筋肉を増やすこと</b>" : "<b>減量中に筋肉を落としにくくすること</b>"}を優先しているためです(基準の比率は、一般的な生活習慣病予防を想定したもの)。総カロリーが低いほど、同じg数でも%は高く出ます。持病などで食事制限がある場合は、医師・管理栄養士の指示を優先してください。</p>
+      <p class="muted" style="font-size:10.5px;margin:6px 0 0;line-height:1.6;">たんぱく質が基準の上限を超えるのは、この目標が${
+        t.direction === "muscle" ? "<b>筋力アップのために筋肉を効率よく増やすこと</b>"
+      : t.direction === "gain" ? "<b>増量中に効率よく筋肉を増やすこと</b>"
+      : t.direction === "loss" ? "<b>減量中に筋肉を落としにくくすること</b>"
+      : "<b>体重を維持しながら筋肉を落とさないこと</b>"
+      }を優先しているためです(基準の比率は、一般的な生活習慣病予防を想定したもの)。総カロリーが低いほど、同じg数でも%は高く出ます。持病などで食事制限がある場合は、医師・管理栄養士の指示を優先してください。</p>
     </div>` : ""}
   </div>`;
 }
@@ -1614,6 +1659,12 @@ function generateDailyAdvice() {
         : `今日の運動で約${targets.exerciseBurn}kcal消費しています。食事だけでは足りない赤字の穴埋めに充てているので、目標カロリーは据え置きです。`);
     }
   }
+
+  // 目標の種類に応じたひとこと(v47)。
+  const goalTypeForAdvice = currentGoalType();
+  if (goalTypeForAdvice === "muscle") parts.push("筋力アップ狙いなので、たんぱく質と休養もしっかり確保しましょう。");
+  else if (goalTypeForAdvice === "maintain") parts.push("今の体重をキープする設定です。大きく増減していなければ順調です。");
+
   return parts.join(" ");
 }
 
@@ -1800,8 +1851,19 @@ function generateBalanceAdvice(history) {
   const avgR = Math.round(avg);
   const latestWeight = [...weightEntries].sort((a,b) => a.date < b.date ? 1 : -1)[0];
   const goalDiff = latestWeight ? latestWeight.weight - goals.weight : 0;
-  const direction = goalDiff > 0.3 ? "loss" : goalDiff < -0.3 ? "gain" : "maintain";
+  const goalType = currentGoalType();
+  // 「現状維持」「筋力アップ」は体重目標欄の差ではなく、設定タブで選んだ目標の種類を
+  // そのままアドバイスの方向として使う(v47。体重が数百g上下しただけで減量/増量の
+  // アドバイスに切り替わってしまうのを防ぐ)。
+  const direction = goalType === "maintain" ? "maintain"
+                   : goalType === "muscle" ? "muscle"
+                   : goalDiff > 0.3 ? "loss" : goalDiff < -0.3 ? "gain" : "maintain";
 
+  if (direction === "muscle") {
+    if (avg <= -150) return { tone:"caution", icon:"⚠️", text:`直近の平均収支は1日あたり${Math.abs(avgR)}kcalの赤字です。筋力アップを狙うなら赤字は逆効果になりやすいので、食事量(特にたんぱく質)を見直しましょう。` };
+    if (avg < 500) return { tone:"encourage", icon:"👍", text:`直近の平均収支は1日あたり${avgR>=0?"+":""}${avgR}kcalです。筋力アップに向けて無理のない黒字を作れているので、この調子でトレーニングと食事を続けましょう。` };
+    return { tone:"caution", icon:"⚠️", text:`直近の平均収支は1日あたり+${avgR}kcalと黒字が大きめです。体脂肪の増え方が急すぎないか、体重の推移もあわせて確認しましょう。` };
+  }
   if (direction === "loss") {
     if (avg <= -750) return { tone:"caution", icon:"⚠️", text:`直近の平均収支は1日あたり${Math.abs(avgR)}kcalの赤字で、やや大きめのペースです。筋肉量の低下や体調不良につながることがあるので、食事量を少し増やすか運動強度を調整してみましょう。` };
     if (avg <= -150) return { tone:"encourage", icon:"👍", text:`直近の平均収支は1日あたり${Math.abs(avgR)}kcalの赤字です。目標体重に向けて順調なペースなので、この調子を続けましょう。` };
@@ -3250,12 +3312,16 @@ function renderTrainingFormOptions() {
 // ============ SETTINGS TAB ============
 function settingsHtml() {
   const targets = getTargets();
+  const goalTypeNow = currentGoalType();
+  const goalKpiNote = goalTypeNow === "muscle" ? "筋力アップ(黒字固定)"
+    : goalTypeNow === "maintain" ? "現状維持"
+    : (PACE_OPTIONS.find(o => o.value === currentPace()) || {}).label || "";
   return `
     <div class="kpi-grid">
       <div class="kpi">
         <div class="kpi-l">体重目標</div>
         <div class="kpi-v">${goals.weight}<span>kg</span></div>
-        <div class="kpi-d neutral">${(PACE_OPTIONS.find(o => o.value === currentPace()) || {}).label || ""}</div>
+        <div class="kpi-d neutral">${goalKpiNote}</div>
       </div>
       <div class="kpi">
         <div class="kpi-l">週間トレーニング目標</div>
@@ -3277,6 +3343,17 @@ function settingsHtml() {
     <div class="card">
       <p class="section-title">🎯 目標</p>
       <div style="margin-bottom:14px;">
+        <p style="font-size:12px;margin:0 0 6px;">目標の種類</p>
+        <div class="wrap" style="margin-bottom:6px;">
+          ${GOAL_TYPES.map(o => `<button class="chip ${goalTypeNow===o.value?"active":""}" data-action="set-goal-type" data-val="${o.value}">${o.label}</button>`).join("")}
+        </div>
+        <p class="muted" style="font-size:10.5px;margin:0;line-height:1.6;">${goalTypeNow === "muscle"
+          ? "筋力アップしたい人向けの設定です。体重目標のペースは使わず、基礎消費に少しの黒字を固定で足し、たんぱく質も多めにします。"
+          : goalTypeNow === "maintain"
+          ? "今の体重をキープしたい人向けの設定です。体重目標のペースは使わず、目安カロリーは基礎消費と同じにします。"
+          : "体重を増やす・減らすペースを下で選べます。"}</p>
+      </div>
+      <div style="margin-bottom:14px;">
         <div class="between" style="margin-bottom:4px;">
           <span style="font-size:12px;">体重目標</span>
           <div class="row" style="gap:4px;width:auto;">
@@ -3294,6 +3371,7 @@ function settingsHtml() {
           </div>
         </div>
       </div>
+      ${goalTypeNow === "weight" ? `
       <div style="margin-bottom:14px;">
         <p style="font-size:12px;margin:0 0 6px;">${targets && targets.direction === "gain" ? "増量ペース" : targets && targets.direction === "loss" ? "減量ペース" : "体重の変化ペース"}</p>
         <div class="wrap" style="margin-bottom:6px;">
@@ -3304,7 +3382,12 @@ function settingsHtml() {
           : targets && targets.direction === "loss"
           ? "1週間に落としたいペースです。ここから1日あたりに必要な赤字(体脂肪1kg≒7200kcal)を計算し、目安カロリーを決めます。"
           : "体重目標が今の体重と違う場合に、1週間に増減させたいペースです。ここから1日あたりに必要な黒字/赤字(体脂肪1kg≒7200kcal)を計算し、目安カロリーを決めます。"}</p>
-      </div>
+      </div>` : `
+      <div style="margin-bottom:14px;background:var(--paper);border-radius:8px;padding:10px;">
+        <p style="font-size:11.5px;margin:0;line-height:1.7;">${goalTypeNow === "muscle"
+          ? `🍽️ 目安カロリーは基礎消費(TDEE)+${MUSCLE_SURPLUS}kcal/日の固定の黒字にしています。体重目標欄はカロリー計算には使いません(からだタブのグラフの目安線としてのみ使われます)。`
+          : `🍽️ 目安カロリーは基礎消費(TDEE)と同じにしています。体重目標欄はカロリー計算には使いません(からだタブのグラフの目安線としてのみ使われます)。`}</p>
+      </div>`}
     </div>
 
     ${targets ? calorieTargetBreakdownHtml(targets) : ""}
@@ -3876,6 +3959,7 @@ document.getElementById("app").addEventListener("click", (e) => {
   else if (action === "copy-yesterday-training") { copyYesterdayTraining(); }
   else if (action === "copy-yesterday-meal") { copyYesterdayMealType(t.dataset.val); }
   else if (action === "set-pace") { goals.paceKgPerWeek = Number(t.dataset.val); saveState(); renderTabContent(); }
+  else if (action === "set-goal-type") { goals.goalType = t.dataset.val; saveState(); renderTabContent(); }
   else if (action === "set-gender") { profile.gender = t.dataset.val; saveState(); renderTabContent(); }
   else if (action === "set-lifestyle") { profile.lifestyle = t.dataset.val; saveState(); renderTabContent(); }
   // 判定候補(AIの概算/内蔵辞書/登録済みマスタ)の候補をタップ: 食事タブへ移動し、その内容を入力欄に入れておく
@@ -3973,7 +4057,7 @@ document.getElementById("app").addEventListener("click", (e) => {
   else if (action === "reset-show") { confirmReset = true; renderTabContent(); }
   else if (action === "reset-no") { confirmReset = false; renderTabContent(); }
   else if (action === "reset-yes-keep-sheet") {
-    entries = []; weightEntries = []; mealEntries = []; goals = { weight: 65, weeklyFreq: 3, paceKgPerWeek: DEFAULT_PACE };
+    entries = []; weightEntries = []; mealEntries = []; goals = { weight: 65, weeklyFreq: 3, paceKgPerWeek: DEFAULT_PACE, goalType: DEFAULT_GOAL_TYPE };
     profile = null; moodByDate = {}; confirmReset = false; onboardStep = 0;
     exerciseMaster = []; mealMaster = []; masterExercisePart = "胸";
     lastStrengthByExercise = {}; lastCardioMinutes = {}; lastHouseworkMinutes = {}; mealDetailOpen = false;
