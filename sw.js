@@ -1,5 +1,5 @@
 /*
- * ヘルスログ — サービスワーカー (v1.4)
+ * ヘルスログ — サービスワーカー (v1.6)
  *
  * 【これがあると何が変わるか】
  * ホーム画面から開いたときに、電波が届かない場所(地下のジム、機内モード)でも
@@ -22,7 +22,7 @@
  * AI中継サーバー(Cloudflare Workers)への通信はPOSTで、ここでは一切横取りしません。
  * AIの応答が控えに残ることはありません。
  */
-const VERSION = 'v1.4';
+const VERSION = 'v1.6';
 const CACHE = 'health-log-' + VERSION;
 // このサービスワーカーが置かれている場所(GitHub Pagesのサブフォルダでも動くよう相対で解決)。
 const HTML_URL = new URL('./index.html', self.registration.scope).href;

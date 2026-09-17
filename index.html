@@ -1,4 +1,4 @@
-<!-- ヘルスログ バージョン: v1.4(設定タブ下部にも同じ番号が表示されます。更新のたびに
+<!-- ヘルスログ バージョン: v1.6(設定タブ下部にも同じ番号が表示されます。更新のたびに
      ここと下のAPP_VERSION、sw.jsのVERSION、README.mdの版数表記を揃えて上げてください) -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -168,7 +168,7 @@ const WORKER_URL = "https://health-log-ai.nishimasax4.workers.dev";
 const WORKER_TOKEN = "hS4%IpejF6842XppRBJz";
 function workerConfigured() { return !!WORKER_URL; }
 // アプリのバージョン番号。更新のたびに増やし、設定タブ下部に表示します。
-const APP_VERSION = "v1.4";
+const APP_VERSION = "v1.6";
 
 const STORAGE_KEY = "health-log-data";
 const PARTS = ["胸","背中","脚","肩","腕","腹筋"];
@@ -703,6 +703,22 @@ const AI_PROMPTS = {
     '- note は20文字程度。なぜその候補かの手がかりや見分け方(例:「衣が厚めならこちら」)\n' +
     '- 食事が写っていないと判断した場合は {"foods":[]} だけを返す',
 
+  // 体重計・体組成計の表示を読み取る(v1.5)。体重の手入力をなくすための機能。
+  // メーカーのアプリ連携やヘルスケア連携と違い、設定が一切不要で、
+  // スマート機能のない体重計でも使えるのが利点。
+  scale: () =>
+    'これは体重計(体組成計)の表示部分の写真です。表示されている数値を読み取ってください。\n\n' +
+    'JSONのみを返してください。前置き・後書き・コードフェンスは不要です。\n' +
+    '形式: {"weight": 数値またはnull, "bodyFat": 数値またはnull}\n\n' +
+    '### 読み取りのきまり\n' +
+    '- weight は体重(kg)。20〜300の範囲。小数第1位まで\n' +
+    '- bodyFat は体脂肪率(%)。3〜60の範囲。小数第1位まで\n' +
+    '- 体重と体脂肪率は数値の大きさで見分ける(例: 「71.8」は体重、「21.5」は体脂肪率)\n' +
+    '- 単位の表示(kg / %)があれば、それを優先して判断する\n' +
+    '- BMI・筋肉量・内臓脂肪レベル・基礎代謝など、体重と体脂肪率以外の数値は無視する\n' +
+    '- 表示が読み取れない、体重計が写っていない、数字がぼやけている場合は、その項目をnullにする\n' +
+    '- 推測で埋めないこと。はっきり読み取れた数値だけを返す',
+
   // 有酸素・家事マスタで、内蔵の表に無い活動の運動強度(MET)を概算する(v48)。
   activityMet: (activityName) =>
     '次の活動の運動強度を、METs(Metabolic Equivalent of Task)の値で概算してください。\n' +
@@ -1145,14 +1161,17 @@ let photoMode = null;            // "alternatives"(3つから選ぶ) | "items"(1
 // 画像を縮小してJPEGのbase64(data:のプレフィックスなし)にする。
 // iPhoneの写真はそのままだと数MBあり、AIへ送るには大きすぎる。
 // canvasを通すことでHEICなどもJPEGに揃えられる(送信先が対応していない形式を避けられる)。
-function downscaleImage_(file) {
+// maxSide を省略すると PHOTO_MAX_SIDE(768px)。体重計の表示を読むときは、
+// 小さな液晶の数字がつぶれないよう、呼び出し側から大きめの値を渡す(v1.5)。
+function downscaleImage_(file, maxSide) {
+  const limit = maxSide || PHOTO_MAX_SIDE;
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
       URL.revokeObjectURL(url);
       try {
-        const scale = Math.min(1, PHOTO_MAX_SIDE / Math.max(img.width, img.height));
+        const scale = Math.min(1, limit / Math.max(img.width, img.height));
         const w = Math.max(1, Math.round(img.width * scale));
         const h = Math.max(1, Math.round(img.height * scale));
         const canvas = document.createElement("canvas");
@@ -1261,6 +1280,91 @@ async function handlePhotoSelected(file) {
 }
 
 // 食事タブに出すカード。撮影ボタンと、判定結果の候補を並べる。
+// ============ 体重計の写真から読み取る(v1.5) ============
+// 体重の手入力は毎日発生するいちばん面倒な作業なので、体重計の表示を撮るだけで
+// 入力欄が埋まるようにする。メーカー連携やヘルスケア連携と違って設定が不要で、
+// スマート機能のない体重計でも使える(食事の写真判定と同じ仕組みを流用)。
+//
+// 【安全策】読み取った値は入力欄に入れるだけで、記録はしない。
+// 利用者が数字を目視で確認して「＋ 記録する」を押して初めて保存される
+// (AIの読み取りは間違うことがあるため。食事の写真判定と同じ考え方)。
+const SCALE_PHOTO_MAX_SIDE = 1280; // 液晶の数字がつぶれないよう、食事写真より高解像度で送る
+const WEIGHT_MIN = 20, WEIGHT_MAX = 300; // 体重として受け付ける範囲(kg)
+let scalePhotoBusy = false;
+function setScaleStatus_(text, isError) {
+  const el = document.getElementById("scale-photo-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.style.color = isError ? "var(--coral)" : "";
+}
+function setScaleButtonBusy_(busy) {
+  const btn = document.getElementById("scale-photo-btn");
+  if (!btn) return;
+  btn.disabled = busy;
+  btn.textContent = busy ? "読み取り中…" : "📷 体重計の表示を撮る";
+}
+async function handleScalePhotoSelected(file) {
+  if (!file || scalePhotoBusy) return;
+  if (!workerConfigured()) {
+    setScaleStatus_("⚠️ AI機能は現在ご利用いただけません。数値は手で入力してください。", true);
+    return;
+  }
+  scalePhotoBusy = true;
+  setScaleButtonBusy_(true);
+  setScaleStatus_("🔄 AIが数値を読み取っています…(ネット接続が必要です)");
+  try {
+    const imageBase64 = await downscaleImage_(file, SCALE_PHOTO_MAX_SIDE);
+    const data = await aiVision_(AI_PROMPTS.scale(), imageBase64, "image/jpeg", { json: true, maxTokens: 300 });
+    if (!data || data.status !== "ok" || !data.text) {
+      setScaleStatus_("⚠️ 読み取れませんでした: " + friendlyAiError_(data && data.message), true);
+      return;
+    }
+    const parsed = parseAiJson_(data.text);
+    if (!parsed) {
+      setScaleStatus_("⚠️ AIの応答を読み取れませんでした。もう一度撮るか、手で入力してください。", true);
+      return;
+    }
+    // 明らかにありえない値は、読み取りミスとして採用しない(体重と体脂肪率を
+    // 取り違える・小数点を落とすといった間違いが起きうるため)。
+    const w = Number(parsed.weight);
+    const bf = Number(parsed.bodyFat);
+    const okW = Number.isFinite(w) && w >= WEIGHT_MIN && w <= WEIGHT_MAX;
+    const okBf = Number.isFinite(bf) && bf >= BODYFAT_MIN && bf <= BODYFAT_MAX;
+    if (!okW && !okBf) {
+      setScaleStatus_("⚠️ 数字を読み取れませんでした。表示部分が画面いっぱいに入るように、明るい場所で撮り直してみてください。", true);
+      return;
+    }
+    const filled = [];
+    if (okW) {
+      const el = document.getElementById("weight-value-input");
+      if (el) { el.value = Math.round(w * 10) / 10; filled.push(`体重 ${Math.round(w * 10) / 10}kg`); }
+    }
+    if (okBf) {
+      const el = document.getElementById("weight-bodyfat-input");
+      if (el) { el.value = Math.round(bf * 10) / 10; filled.push(`体脂肪率 ${Math.round(bf * 10) / 10}%`); }
+    }
+    // 読み取れなかった項目は明示する。黙っていると、入力欄が空のまま
+    // 「＋ 記録する」を押してしまい、なぜ記録されないのか分からなくなるため。
+    const missing = [];
+    if (!okW) missing.push("体重");
+    if (!okBf) missing.push("体脂肪率");
+    setScaleStatus_(`✅ ${filled.join(" / ")} を読み取りました。数字が合っているか確認して「＋ 記録する」を押してください`
+      + (missing.length ? `(${missing.join("・")}は読み取れなかったので、必要なら手で入力してください)` : ""));
+  } catch (e) {
+    setScaleStatus_("⚠️ 通信エラーが発生しました: " + friendlyNetError_(e && e.message ? e.message : String(e)), true);
+  } finally {
+    scalePhotoBusy = false;
+    setScaleButtonBusy_(false);
+  }
+}
+// からだタブの「体重を記録」カードに差し込む、撮影ボタンの一式。
+function scalePhotoRowHtml() {
+  return `
+    <input type="file" id="scale-photo-input" accept="image/*" class="hidden">
+    <button type="button" class="chip active-b" id="scale-photo-btn" data-action="take-scale-photo" style="margin-bottom:4px;">📷 体重計の表示を撮る</button>
+    <p id="scale-photo-status" class="muted" style="font-size:10.5px;margin:0 0 8px;line-height:1.6;"></p>`;
+}
+
 function photoCardHtml() {
   const rows = (photoResults || []).map(f => {
     const badge = f.source === "master" ? '<span class="muted" style="font-size:10px;">📌登録済みの値</span>'
@@ -1414,8 +1518,19 @@ function weightTrendColor_(diff, currentWeight, goalWeight) {
 function computeTargets(p, weight, goalWeight) {
   const age = Number(p.age), height = Number(p.height);
   if (!age || !height || !weight) return null;
-  // 体脂肪率が分かっていない場合の推定式(Mifflin-St Jeor)。身長・体重・年齢・性別だけを
-  // 使うため、同じ体格なら体脂肪率が何%でも同じ値になる。
+  // 体脂肪率が分かっていない場合の推定式。身長・体重・年齢・性別だけを使うため、
+  // 同じ体格なら体脂肪率が何%でも同じ値になる。
+  //
+  // 【v1.6で国立健康・栄養研究所の式(Ganpule式)に変更】
+  // それまではMifflin-St Jeor式を使っていたが、欧米人のデータから作られた式のため、
+  // 日本人の体格では低めに出やすい。こちらは20〜70歳代の日本人を対象に作られた
+  // 推定式なので、このアプリの利用者にはより合う。
+  //   {0.1238 + 0.0481×体重 + 0.0234×身長 − 0.0138×年齢 − 0.5473×性別} × 1000 / 4.186
+  //   性別: 男性=1、女性=2(「その他」は従来と同じく女性側の係数で計算する。
+  //         そのほうが低めに出るため、目標カロリーを過大に見積もらない安全側になる)
+  const sexCoef = p.gender === "男性" ? 1 : 2;
+  const bmrGanpule = (0.1238 + 0.0481*weight + 0.0234*height - 0.0138*age - 0.5473*sexCoef) * 1000 / 4.186;
+  // 比較用に従来の式も計算しておく(画面に併記して、どのくらい差があるか分かるようにする)。
   const bmrMifflin = p.gender === "男性"
     ? 10*weight + 6.25*height - 5*age + 5
     : 10*weight + 6.25*height - 5*age - 161;
@@ -1424,8 +1539,10 @@ function computeTargets(p, weight, goalWeight) {
   const bodyFat = recentBodyFat_();
   const leanMass = bodyFat != null ? weight * (1 - bodyFat / 100) : null;
   const bmrKatch = leanMass != null ? 370 + 21.6 * leanMass : null;
-  const bmr = bmrKatch != null ? bmrKatch : bmrMifflin;
-  const bmrMethod = bmrKatch != null ? "katch" : "mifflin";
+  const bmr = bmrKatch != null ? bmrKatch : bmrGanpule;
+  const bmrMethod = bmrKatch != null ? "katch" : "ganpule";
+  // この式が検証された年齢の範囲(20〜70歳代)。外れる場合は画面で注意書きを出す。
+  const bmrAgeOutOfRange = age < 20 || age >= 80;
   // 運動ぶんを含まない土台(基礎代謝 × 日常生活の活動量)。運動の消費は記録から
   // 実測ぶんだけを別途上乗せする(LIFESTYLE_FACTOR の説明を参照)。
   const tdee = bmr * (LIFESTYLE_FACTOR[p.lifestyle] || LIFESTYLE_FACTOR[DEFAULT_LIFESTYLE]);
@@ -1500,9 +1617,10 @@ function computeTargets(p, weight, goalWeight) {
     floor: Math.round(floor), goalWeight: goal,
     proteinFactor: leanMass != null ? proteinFactorLean : proteinFactorWeight,
     // 体組成まわり(画面で「どの式で計算したか」を示すために使う)
-    bmrMethod, bodyFat,
+    bmrMethod, bodyFat, bmrAgeOutOfRange,
     leanMass: leanMass != null ? Math.round(leanMass * 10) / 10 : null,
     fatMass: leanMass != null ? Math.round((weight - leanMass) * 10) / 10 : null,
+    bmrGanpule: Math.round(bmrGanpule),
     bmrMifflin: Math.round(bmrMifflin),
   };
 }
@@ -1710,11 +1828,11 @@ function calorieTargetBreakdownHtml(t) {
     <p class="section-title">🧮 目安カロリーの内訳</p>
     ${line("基礎代謝", `${t.bmr} kcal`, t.bmrMethod === "katch"
         ? `(Katch-McArdle式 / 体脂肪率${t.bodyFat}%・除脂肪体重${t.leanMass}kgから)`
-        : "(Mifflin-St Jeor式 / 体脂肪率は未記録)")}
-    ${t.bmrMethod === "katch" && t.bmr !== t.bmrMifflin
-        ? `<p class="muted" style="font-size:10.5px;margin:-2px 0 8px;line-height:1.6;">体脂肪率を使わない場合は${t.bmrMifflin}kcal(差 ${t.bmr - t.bmrMifflin > 0 ? "+" : ""}${t.bmr - t.bmrMifflin}kcal)。直近${BODYFAT_AVG_COUNT}件までの平均で計算しているため、1回の測定のブレで目標が揺れないようにしています。</p>`
-        : (t.bmrMethod === "mifflin"
-        ? `<p class="muted" style="font-size:10.5px;margin:-2px 0 8px;line-height:1.6;">からだタブで体脂肪率も記録すると、体組成から計算する式に切り替わります。</p>` : "")}
+        : "(国立健康・栄養研究所の式 / 体脂肪率は未記録)")}
+    ${t.bmrMethod === "katch"
+        ? `<p class="muted" style="font-size:10.5px;margin:-2px 0 8px;line-height:1.6;">体脂肪率を使わない場合は${t.bmrGanpule}kcal(差 ${t.bmr - t.bmrGanpule > 0 ? "+" : ""}${t.bmr - t.bmrGanpule}kcal)。直近${BODYFAT_AVG_COUNT}件までの平均で計算しているため、1回の測定のブレで目標が揺れないようにしています。</p>`
+        : `<p class="muted" style="font-size:10.5px;margin:-2px 0 8px;line-height:1.6;">日本人(20〜70歳代)を対象に作られた推定式を使っています。海外で広く使われるMifflin-St Jeor式なら${t.bmrMifflin}kcal(差 ${t.bmrGanpule - t.bmrMifflin > 0 ? "+" : ""}${t.bmrGanpule - t.bmrMifflin}kcal)。からだタブで体脂肪率も記録すると、体組成から計算するさらに精度の高い式に切り替わります。</p>`}
+    ${t.bmrAgeOutOfRange ? `<p class="muted" style="font-size:10.5px;margin:-2px 0 8px;line-height:1.6;color:var(--coral);">⚠️ この推定式は20〜70歳代の方を対象に作られています。その範囲外では誤差が大きくなることがあるので、目安としてご覧ください。</p>` : ""}
     ${line("基礎消費", `${t.tdee} kcal`, "(基礎代謝 × 日常生活の活動量)")}
     ${t.needDeficit !== 0 ? line(
         t.direction === "loss" ? "目標ペースに必要な赤字"
@@ -3069,6 +3187,7 @@ function weightHtml() {
           <input type="number" step="0.1" id="weight-waist-input" placeholder="例: 82.0" class="mono" value="${latest && latest.waist != null ? latest.waist : ""}">
         </div>
       </div>
+      ${scalePhotoRowHtml()}
       <p class="muted" style="font-size:10.5px;margin:0 0 10px;line-height:1.6;">体脂肪率は任意です。記録すると、基礎代謝を体組成から計算する式(Katch-McArdle)に自動で切り替わり、目標カロリーとたんぱく質の目安がより実態に近づきます。腹囲も任意で、記録するとAIのひとことコメントで体重・体脂肪率とあわせて参照されます。</p>
       ${entryDateNoticeHtml("weight")}
       <button class="btn-primary" data-action="add-weight">＋ 記録する</button>
@@ -4220,6 +4339,10 @@ document.getElementById("app").addEventListener("click", (e) => {
     const el = document.getElementById("photo-input");
     if (el) el.click();
   }
+  else if (action === "take-scale-photo") {
+    const el = document.getElementById("scale-photo-input");
+    if (el) el.click();
+  }
   else if (action === "add-meal") { handleAddMeal(); }
   else if (action === "add-weight") { handleAddWeight(); }
   else if (action === "open-x-share") { openXShare(); }
@@ -4518,6 +4641,12 @@ document.getElementById("app").addEventListener("change", (e) => {
     const f = e.target.files[0];
     e.target.value = "";   // 同じ写真をもう一度選んでも change が起きるようにする
     handlePhotoSelected(f);
+    return;
+  }
+  if (e.target.id === "scale-photo-input" && e.target.files && e.target.files[0]) {
+    const f = e.target.files[0];
+    e.target.value = "";
+    handleScalePhotoSelected(f);
     return;
   }
   if (e.target.id === "import-file-input" && e.target.files && e.target.files[0]) {
