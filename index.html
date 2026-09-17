@@ -1,3 +1,5 @@
+<!-- ヘルスログ バージョン: v1.4(設定タブ下部にも同じ番号が表示されます。更新のたびに
+     ここと下のAPP_VERSION、sw.jsのVERSION、README.mdの版数表記を揃えて上げてください) -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -166,7 +168,7 @@ const WORKER_URL = "https://health-log-ai.nishimasax4.workers.dev";
 const WORKER_TOKEN = "hS4%IpejF6842XppRBJz";
 function workerConfigured() { return !!WORKER_URL; }
 // アプリのバージョン番号。更新のたびに増やし、設定タブ下部に表示します。
-const APP_VERSION = "v1.1";
+const APP_VERSION = "v1.4";
 
 const STORAGE_KEY = "health-log-data";
 const PARTS = ["胸","背中","脚","肩","腕","腹筋"];
@@ -178,7 +180,10 @@ const EXERCISES_BY_PART = {
   "腕": ["アームカール","トライセップエクステンション","ハンマーカール"],
   "腹筋": ["クランチ","プランク","レッグレイズ"],
 };
-const CARDIO_OPTIONS = ["ランニング","ジョギング","バイク","ウォーキング","クロストレーナー","リカベントバイク","その他"];
+// v48でスポーツ系の種目を追加(テニス・サッカー・バスケットボール・水泳・卓球・
+// ゴルフ・登山/ハイキング・ダンス・縄跳び)。それでも足りない場合は、設定タブの
+// 「有酸素・スポーツ マスタ」から自分で追加できる(cardioMaster)。
+const CARDIO_OPTIONS = ["ランニング","ジョギング","バイク","ウォーキング","クロストレーナー","リカベントバイク","テニス","サッカー","バスケットボール","水泳","卓球","ゴルフ(徒歩)","登山・ハイキング","ダンス","縄跳び","その他"];
 // 運動による消費カロリーの概算用(METs法の簡易版)。すべて目安の値です。
 // MET値の目安(Compendium of Physical Activities等を参考にした概算・ふつうの強度)。
 // ジョギングはランニングよりゆっくりめのペースを想定し、7.0(Compendiumの
@@ -186,11 +191,40 @@ const CARDIO_OPTIONS = ["ランニング","ジョギング","バイク","ウォ�
 // 1〜2割ほど多く見積もることになるため、v44.7で項目を分けた。
 // クロストレーナー(エリプティカル)は中強度の有酸素運動として5.0。
 // リカベントバイクは背もたれ付きで負荷が軽めになりやすいため、通常のバイク(7.0)より低めの4.5。
-const CARDIO_MET = { "ランニング":8, "ジョギング":7, "バイク":7, "ウォーキング":3.5, "クロストレーナー":5, "リカベントバイク":4.5, "その他":5 };
+// スポーツ系はCompendiumの「一般的な強度」目安(テニス=シングルス、サッカー・バスケは
+// 試合形式、水泳はゆったりめ、卓球はラリー中心、ゴルフはカートを使わず徒歩想定)。
+const CARDIO_MET = { "ランニング":8, "ジョギング":7, "バイク":7, "ウォーキング":3.5, "クロストレーナー":5, "リカベントバイク":4.5,
+  "テニス":7, "サッカー":7, "バスケットボール":6.5, "水泳":6, "卓球":4, "ゴルフ(徒歩)":4.8, "登山・ハイキング":6, "ダンス":5, "縄跳び":10, "その他":5 };
 // 家事の消費カロリーもMETs法の簡易概算で出す(有酸素運動と同じ計算式)。
 // MET値は運動と同様、Compendium of Physical Activities等を参考にした目安。
-const HOUSEWORK_OPTIONS = ["掃除機がけ","拭き掃除","洗濯物の干し・取り込み","皿洗い","布団の上げ下ろし","子どもの世話・遊び相手","買い物(徒歩)","庭仕事・草むしり","洗車","その他"];
-const HOUSEWORK_MET = { "掃除機がけ":3.3, "拭き掃除":3.8, "洗濯物の干し・取り込み":2.3, "皿洗い":2.3, "布団の上げ下ろし":2.5, "子どもの世話・遊び相手":3.0, "買い物(徒歩)":3.5, "庭仕事・草むしり":4.0, "洗車":3.0, "その他":3.0 };
+// v48で「料理」「アイロンがけ」「ゴミ出し・片付け」「窓拭き」を追加。
+const HOUSEWORK_OPTIONS = ["掃除機がけ","拭き掃除","洗濯物の干し・取り込み","皿洗い","布団の上げ下ろし","子どもの世話・遊び相手","買い物(徒歩)","庭仕事・草むしり","洗車","料理","アイロンがけ","ゴミ出し・片付け","窓拭き","その他"];
+const HOUSEWORK_MET = { "掃除機がけ":3.3, "拭き掃除":3.8, "洗濯物の干し・取り込み":2.3, "皿洗い":2.3, "布団の上げ下ろし":2.5, "子どもの世話・遊び相手":3.0, "買い物(徒歩)":3.5, "庭仕事・草むしり":4.0, "洗車":3.0,
+  "料理":2.5, "アイロンがけ":2.3, "ゴミ出し・片付け":2.3, "窓拭き":3.0, "その他":3.0 };
+// 上の内蔵リストに無い種目は、設定タブの「有酸素・スポーツ マスタ」「家事マスタ」から
+// 自分で追加できる({id, name, met})。運動強度(MET)は「らくらく/ふつう/きつい」の
+// 簡易選択、または「🔍 AIで運動強度を調べる」で概算値を入れられる(v48)。
+let cardioMaster = [];
+let houseworkMaster = [];
+// 運動強度の簡易選択肢(METの目安値)。MET自体は利用者にはなじみが薄い単位なので、
+// 「らくらく/ふつう/きつい」の3段階から選ぶだけで登録できるようにしている。
+const ACTIVITY_INTENSITY_LEVELS = [
+  { key: "light",    label: "らくらく", met: 2.5 },
+  { key: "moderate", label: "ふつう",   met: 4.5 },
+  { key: "vigorous", label: "きつい",   met: 7.0 },
+];
+const DEFAULT_ACTIVITY_INTENSITY = "moderate";
+// 名前からMETを引く(マスタ登録があればそちらを優先、無ければ内蔵表、それも無ければ「その他」)。
+function cardioMetFor_(name) {
+  const custom = cardioMaster.find(c => c.name === name);
+  if (custom && custom.met) return custom.met;
+  return CARDIO_MET[name] || CARDIO_MET["その他"];
+}
+function houseworkMetFor_(name) {
+  const custom = houseworkMaster.find(c => c.name === name);
+  if (custom && custom.met) return custom.met;
+  return HOUSEWORK_MET[name] || HOUSEWORK_MET["その他"];
+}
 const STRENGTH_KCAL_PER_SET = 10; // 筋トレ1セットあたりの消費カロリー概算(目安)
 const REP_QUICK_OPTIONS = [10,20,30,40,50]; // 回数のワンタップ候補(10回刻み・50回まで)。これ以外の回数は入力欄に直接入力できます
 const MINUTE_QUICK_OPTIONS = [15,30,45,60]; // 有酸素の時間のワンタップ候補(分)。これ以外の時間は入力欄に直接入力できます
@@ -298,6 +332,12 @@ let selectedCardio = "ランニング";
 let selectedHousework = "掃除機がけ";
 let selectedMealType = "朝食";
 let masterExercisePart = "胸"; // which part's tab is active in the master-data editor
+// 有酸素・家事マスタの登録フォームの一時状態(v48)。運動強度(MET)は「らくらく/ふつう/
+// きつい」チップか「🔍 AIで運動強度を調べる」で決め、追加ボタンを押すと確定する。
+let masterCardioMet = ACTIVITY_INTENSITY_LEVELS.find(l => l.key === DEFAULT_ACTIVITY_INTENSITY).met;
+let masterCardioIntensityKey = DEFAULT_ACTIVITY_INTENSITY;
+let masterHouseworkMet = ACTIVITY_INTENSITY_LEVELS.find(l => l.key === DEFAULT_ACTIVITY_INTENSITY).met;
+let masterHouseworkIntensityKey = DEFAULT_ACTIVITY_INTENSITY;
 let historyView = "list";
 let dataLoadFailed = false;     // localStorageの読み込みに失敗したか(中身が壊れていた等)
 let storageWriteFailed = false; // localStorageへの保存に失敗したか(容量超過・プライベートモード等)
@@ -347,7 +387,7 @@ function updateEntryDateNotice(kind) {
 }
 // 設定タブの各セクションの開閉状態。よく使う同期・目標は常時表示、それ以外は
 // デフォルトで畳んでおき、スクロール量を減らす。
-let settingsOpenSections = { profile:false, masterExercise:false, masterMeal:false, data:false };
+let settingsOpenSections = { profile:false, masterExercise:false, masterMeal:false, masterCardio:false, masterHousework:false, data:false };
 
 let onboardStep = 0;
 let onboardListenerBound = false; // #appは毎回innerHTMLごと差し替わるが要素自体は使い回すため、
@@ -422,7 +462,10 @@ function cardioOptionsByUsage() {
     s.count++;
     if (e.date > s.last) s.last = e.date;
   });
-  const fixed = CARDIO_OPTIONS.filter(c => c !== "その他");
+  // 内蔵の選択肢(「その他」を除く)に、マスタ登録した自分の種目(重複名は除く)を加える。
+  const builtIn = CARDIO_OPTIONS.filter(c => c !== "その他");
+  const customNames = cardioMaster.map(c => c.name).filter(n => n && !builtIn.includes(n));
+  const fixed = [...builtIn, ...customNames];
   const sorted = fixed
     .map((name, idx) => ({ name, idx, count: (stats[name] || {}).count || 0, last: (stats[name] || {}).last || "" }))
     .sort((a, b) =>
@@ -431,6 +474,28 @@ function cardioOptionsByUsage() {
       (a.idx - b.idx))
     .map(x => x.name);
   return CARDIO_OPTIONS.includes("その他") ? [...sorted, "その他"] : sorted;
+}
+// 家事版のcardioOptionsByUsage()。考え方は同じ(内蔵の選択肢+マスタ登録した自分の
+// 家事を、よく使うものほど上に並べる。「その他」は常に末尾)。
+function houseworkOptionsByUsage() {
+  const stats = {};
+  entries.forEach(e => {
+    if (e.type !== "housework" || !e.exercise) return;
+    const s = stats[e.exercise] || (stats[e.exercise] = { count: 0, last: "" });
+    s.count++;
+    if (e.date > s.last) s.last = e.date;
+  });
+  const builtIn = HOUSEWORK_OPTIONS.filter(c => c !== "その他");
+  const customNames = houseworkMaster.map(c => c.name).filter(n => n && !builtIn.includes(n));
+  const fixed = [...builtIn, ...customNames];
+  const sorted = fixed
+    .map((name, idx) => ({ name, idx, count: (stats[name] || {}).count || 0, last: (stats[name] || {}).last || "" }))
+    .sort((a, b) =>
+      (b.count - a.count) ||
+      (a.last < b.last ? 1 : a.last > b.last ? -1 : 0) ||
+      (a.idx - b.idx))
+    .map(x => x.name);
+  return HOUSEWORK_OPTIONS.includes("その他") ? [...sorted, "その他"] : sorted;
 }
 // 有酸素フォームを開いたときに、あらかじめ選ばれている種目(v38)。以前は常に
 // 「ランニング」で固定だったため、実際にはバイクしかやらない人でも毎回選び直す必要が
@@ -591,6 +656,18 @@ function loadNutritionCache() {
 function saveNutritionCache() {
   try { localStorage.setItem(AI_NUTRITION_CACHE_KEY, JSON.stringify(nutritionCache)); } catch (e) {}
 }
+// 有酸素・家事マスタの「🔍 AIで運動強度を調べる」用のキャッシュ(考え方は栄養検索と同じ)。
+const AI_ACTIVITY_CACHE_KEY = "health-log-activity-met-cache";
+let activityMetCache = {};
+function loadActivityMetCache() {
+  try {
+    const raw = localStorage.getItem(AI_ACTIVITY_CACHE_KEY);
+    if (raw) activityMetCache = JSON.parse(raw) || {};
+  } catch (e) { activityMetCache = {}; }
+}
+function saveActivityMetCache() {
+  try { localStorage.setItem(AI_ACTIVITY_CACHE_KEY, JSON.stringify(activityMetCache)); } catch (e) {}
+}
 // ============ AIへの指示文と中継 ============
 // AIへの指示文(プロンプト)はこのファイル側に置き、Worker(worker.js)は
 // 「受け取った指示文をAIへ渡して、返ってきた文章をそのまま返す」だけにしている。
@@ -625,6 +702,14 @@ const AI_PROMPTS = {
     '- 栄養値は、その分量あたりの概算。protein/fat/carb はグラム、小数第1位まで\n' +
     '- note は20文字程度。なぜその候補かの手がかりや見分け方(例:「衣が厚めならこちら」)\n' +
     '- 食事が写っていないと判断した場合は {"foods":[]} だけを返す',
+
+  // 有酸素・家事マスタで、内蔵の表に無い活動の運動強度(MET)を概算する(v48)。
+  activityMet: (activityName) =>
+    '次の活動の運動強度を、METs(Metabolic Equivalent of Task)の値で概算してください。\n' +
+    '活動名: ' + activityName + '\n\n' +
+    'JSONのみを返してください。前置き・後書き・コードフェンスは不要です。\n' +
+    '形式: {"met": 数値}\n' +
+    'METはCompendium of Physical Activitiesなどを参考にした、成人がふつうの強度で行った場合の目安値。小数第1位まで。',
 };
 
 // AIは指示しても ```json …``` で囲んで返してくることがあるので、囲みを外してから読む。
@@ -792,6 +877,74 @@ async function aiLookupNutrition(target) {
     aiLookupInFlight.delete(cacheKey);
   }
 }
+// ---- 有酸素・家事マスタの「🔍 AIで運動強度を調べる」 ----
+// 考え方はaiLookupNutrition()と同じ(キャッシュ→AI問い合わせ→結果を反映)だが、
+// 返す値がMETひとつだけなので、ずっと単純にしている。
+const aiActivityLookupInFlight = new Set();
+// AIやキャッシュから得たMET値に、いちばん近い「らくらく/ふつう/きつい」を選び直す
+// (チップの見た目をAIの概算に合わせるため。数値そのものはmasterCardioMet等に別途保持)。
+function closestIntensityKey_(met) {
+  let best = ACTIVITY_INTENSITY_LEVELS[0], bestDiff = Math.abs(met - best.met);
+  ACTIVITY_INTENSITY_LEVELS.forEach(l => {
+    const d = Math.abs(met - l.met);
+    if (d < bestDiff) { best = l; bestDiff = d; }
+  });
+  return best.key;
+}
+async function aiLookupActivityMet(kind) {
+  const isCardio = kind === "cardio";
+  const nameEl = document.getElementById(isCardio ? "master-cardio-name-input" : "master-housework-name-input");
+  const statusEl = document.getElementById(isCardio ? "ai-lookup-cardio-status" : "ai-lookup-housework-status");
+  const activityName = nameEl ? nameEl.value.trim() : "";
+  if (!activityName) { if (statusEl) statusEl.textContent = "⚠️ 先に名前を入力してください"; return; }
+
+  const applyMet = (met) => {
+    if (isCardio) { masterCardioMet = met; masterCardioIntensityKey = closestIntensityKey_(met); }
+    else { masterHouseworkMet = met; masterHouseworkIntensityKey = closestIntensityKey_(met); }
+  };
+  const refreshSection = () => { if (isCardio) renderMasterCardioSection(); else renderMasterHouseworkSection(); };
+
+  const cacheKey = normalizeFoodText(activityName);
+  if (activityMetCache[cacheKey] != null) {
+    applyMet(activityMetCache[cacheKey]);
+    if (statusEl) statusEl.textContent = `✅ 前回のAI検索結果を再利用しました(運動強度の目安 MET ${activityMetCache[cacheKey]})(通信なし・無料枠を消費していません)`;
+    refreshSection();
+    return;
+  }
+  if (!workerConfigured()) {
+    if (statusEl) statusEl.textContent = "⚠️ AI機能は現在ご利用いただけません。下の「らくらく/ふつう/きつい」から選んでください。";
+    return;
+  }
+  if (aiActivityLookupInFlight.has(cacheKey)) {
+    if (statusEl) statusEl.textContent = "🔄 すでに問い合わせ中です。応答をお待ちください(連続で押すと無料枠を余分に消費します)";
+    return;
+  }
+  aiActivityLookupInFlight.add(cacheKey);
+  if (statusEl) statusEl.textContent = "🔄 AIに問い合わせ中...(ネット接続が必要です)";
+  try {
+    const data = await aiText_("activityMet", AI_PROMPTS.activityMet(activityName), { json: true, maxTokens: 200 });
+    if (data.status !== "ok" || !data.text) {
+      if (statusEl) statusEl.textContent = "⚠️ 取得できませんでした: " + friendlyAiError_(data.message);
+      return;
+    }
+    const raw = parseAiJson_(data.text);
+    if (!raw || typeof raw.met === "undefined" || !isFinite(Number(raw.met)) || Number(raw.met) <= 0) {
+      if (statusEl) statusEl.textContent = "⚠️ AIの応答を読み取れませんでした。「らくらく/ふつう/きつい」から選んでください。";
+      return;
+    }
+    // 明らかにおかしい値(0以下・極端に大きい)が返った場合の安全策として1〜15の範囲に収める。
+    const met = Math.max(1, Math.min(15, Math.round(Number(raw.met) * 10) / 10));
+    activityMetCache[cacheKey] = met;
+    saveActivityMetCache();
+    applyMet(met);
+    if (statusEl) statusEl.textContent = `✅ AI概算: 運動強度の目安 MET ${met} ※目安です。「らくらく/ふつう/きつい」で手動修正もできます`;
+  } catch (err) {
+    if (statusEl) statusEl.textContent = "⚠️ 通信エラーが発生しました: " + friendlyNetError_(err.message);
+  } finally {
+    aiActivityLookupInFlight.delete(cacheKey);
+  }
+  refreshSection();
+}
 // 「よく食べるものに登録」ボタンの表示。AI検索が成功した直後にだけ出す。
 function renderSaveToMasterButton_(target) {
   const ids = foodFieldIds_(target);
@@ -847,7 +1000,9 @@ function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const data = JSON.parse(raw);
+      // 過去に取り込んだ壊れた/細工されたデータが残っている可能性もあるため、
+      // 起動時にも同じ検疫を通す(sanitizeImported_の説明を参照)。
+      const data = sanitizeImported_(JSON.parse(raw));
       entries = data.entries || [];
       weightEntries = data.weightEntries || [];
       mealEntries = data.mealEntries || [];
@@ -859,6 +1014,8 @@ function loadState() {
       moodByDate = data.moodByDate || {};
       exerciseMaster = data.exerciseMaster || [];
       mealMaster = data.mealMaster || [];
+      cardioMaster = data.cardioMaster || [];
+      houseworkMaster = data.houseworkMaster || [];
       lastStrengthByExercise = data.lastStrengthByExercise || {};
       lastCardioMinutes = data.lastCardioMinutes || {};
       lastHouseworkMinutes = data.lastHouseworkMinutes || {};
@@ -883,7 +1040,7 @@ function seedExerciseMasterIfEmpty() {
 }
 function saveState() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ entries, weightEntries, mealEntries, goals, profile, moodByDate, exerciseMaster, mealMaster, lastStrengthByExercise, lastCardioMinutes, lastHouseworkMinutes }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ entries, weightEntries, mealEntries, goals, profile, moodByDate, exerciseMaster, mealMaster, cardioMaster, houseworkMaster, lastStrengthByExercise, lastCardioMinutes, lastHouseworkMinutes }));
     // 直前まで保存できていなかった場合は、復旧したことを警告表示にも反映する。
     if (storageWriteFailed) { storageWriteFailed = false; renderDataWarning(); }
   } catch (e) {
@@ -1678,10 +1835,10 @@ function estimateExerciseBurnBreakdownForDate(dateStr, weightKg) {
     if (e.type === "strength") {
       strength += STRENGTH_KCAL_PER_SET;
     } else if (e.type === "housework") {
-      const met = HOUSEWORK_MET[e.exercise] || HOUSEWORK_MET["その他"];
+      const met = houseworkMetFor_(e.exercise);
       cardio += (met * 3.5 * weightKg / 200) * (e.minutes || 0);
     } else {
-      const met = CARDIO_MET[e.exercise] || CARDIO_MET["その他"];
+      const met = cardioMetFor_(e.exercise);
       cardio += (met * 3.5 * weightKg / 200) * (e.minutes || 0);
     }
   });
@@ -1888,7 +2045,7 @@ function exportJson() {
     const dump = {
       app: "health-log", version: APP_VERSION, exportedAt: new Date().toISOString(),
       entries, weightEntries, mealEntries, goals, profile, moodByDate,
-      exerciseMaster, mealMaster, lastStrengthByExercise, lastCardioMinutes, lastHouseworkMinutes,
+      exerciseMaster, mealMaster, cardioMaster, houseworkMaster, lastStrengthByExercise, lastCardioMinutes, lastHouseworkMinutes,
     };
     const blob = new Blob([JSON.stringify(dump, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -1905,14 +2062,72 @@ function exportJson() {
   }
   renderTabContent();
 }
+// ---- 復元データの検疫(v1.3) ----
+// バックアップJSONは「外から来るデータ」です。自分で書き出したファイルなら問題ありま
+// せんが、他人から受け取ったファイルや壊れたファイルには、名前欄にHTMLの断片や、
+// 文字列のはずの場所にオブジェクトが入っていることがあり得ます。表示側ではesc()で
+// 必ず逃がしていますが、万一どこか1か所でesc()が漏れても被害が出ないよう、
+// 取り込んだ時点で「文字列は文字列」「数値は数値」に整えておきます。
+function safeStr_(v) {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return ""; // オブジェクト・配列・関数などが来た場合は捨てる(画面に出す値ではない)
+}
+function safeNum_(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+// 画面に出る欄・見分けに使う欄だけを整える。知らない項目はそのまま残すので、
+// 将来項目が増えても復元でデータが欠けることはない。
+function sanitizeRecords_(list, strFields, numFields) {
+  if (!Array.isArray(list)) return [];
+  return list.filter(x => x && typeof x === "object" && !Array.isArray(x)).map(x => {
+    const o = Object.assign({}, x);
+    strFields.forEach(f => { if (f in o) o[f] = safeStr_(o[f]); });
+    numFields.forEach(f => { if (f in o) o[f] = safeNum_(o[f]); });
+    delete o.__proto__;
+    return o;
+  });
+}
+function sanitizeImported_(data) {
+  data.entries = sanitizeRecords_(data.entries, ["id","date","type","part","exercise"], ["reps","weight","minutes"]);
+  data.weightEntries = sanitizeRecords_(data.weightEntries, ["date"], ["weight","bodyFat","waist"]);
+  data.mealEntries = sanitizeRecords_(data.mealEntries, ["id","date","mealType","text"], ["calories","protein","fat","carb"]);
+  data.exerciseMaster = sanitizeRecords_(data.exerciseMaster, ["id","part","name"], []);
+  data.mealMaster = sanitizeRecords_(data.mealMaster, ["id","name"], ["calories","protein","fat","carb"]);
+  data.cardioMaster = sanitizeRecords_(data.cardioMaster, ["id","name"], ["met"]);
+  data.houseworkMaster = sanitizeRecords_(data.houseworkMaster, ["id","name"], ["met"]);
+  // MET値が読み取れない・異常な場合は、計算が壊れないよう「ふつう」の値に寄せる。
+  const fallbackMet = ACTIVITY_INTENSITY_LEVELS.find(l => l.key === DEFAULT_ACTIVITY_INTENSITY).met;
+  [data.cardioMaster, data.houseworkMaster].forEach(list => list.forEach(x => {
+    if (!x.met || x.met <= 0 || x.met > 25) x.met = fallbackMet;
+  }));
+  if (data.profile && typeof data.profile === "object") {
+    data.profile.gender = safeStr_(data.profile.gender);
+    data.profile.lifestyle = safeStr_(data.profile.lifestyle);
+    data.profile.age = safeNum_(data.profile.age);
+    data.profile.height = safeNum_(data.profile.height);
+  } else {
+    data.profile = null;
+  }
+  if (data.moodByDate && typeof data.moodByDate === "object" && !Array.isArray(data.moodByDate)) {
+    Object.keys(data.moodByDate).forEach(k => { data.moodByDate[k] = safeStr_(data.moodByDate[k]); });
+  } else {
+    data.moodByDate = {};
+  }
+  return data;
+}
 function importJsonFile(file) {
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      const data = JSON.parse(String(reader.result));
-      if (!data || (!Array.isArray(data.entries) && !Array.isArray(data.mealEntries))) {
+      const parsed = JSON.parse(String(reader.result));
+      if (!parsed || (!Array.isArray(parsed.entries) && !Array.isArray(parsed.mealEntries))) {
         throw new Error("このアプリの書き出しファイルではないようです");
       }
+      // 画面に出す前に、外から来たデータを無害な形に整える(sanitizeImported_の説明を参照)。
+      const data = sanitizeImported_(parsed);
       entries = data.entries || [];
       weightEntries = data.weightEntries || [];
       mealEntries = data.mealEntries || [];
@@ -1924,6 +2139,8 @@ function importJsonFile(file) {
       moodByDate = data.moodByDate || {};
       exerciseMaster = data.exerciseMaster || [];
       mealMaster = data.mealMaster || [];
+      cardioMaster = data.cardioMaster || [];
+      houseworkMaster = data.houseworkMaster || [];
       lastStrengthByExercise = data.lastStrengthByExercise || {};
       lastCardioMinutes = data.lastCardioMinutes || {};
       lastHouseworkMinutes = data.lastHouseworkMinutes || {};
@@ -3080,10 +3297,10 @@ function progressBurnHtml() {
 function estimateEntryBurn_(e, weightKg) {
   if (e.type === "strength") return STRENGTH_KCAL_PER_SET;
   if (e.type === "housework") {
-    const met = HOUSEWORK_MET[e.exercise] || HOUSEWORK_MET["その他"];
+    const met = houseworkMetFor_(e.exercise);
     return Math.round((met * 3.5 * (weightKg || 60) / 200) * (e.minutes || 0));
   }
-  const met = CARDIO_MET[e.exercise] || CARDIO_MET["その他"];
+  const met = cardioMetFor_(e.exercise);
   return Math.round((met * 3.5 * (weightKg || 60) / 200) * (e.minutes || 0));
 }
 function trainingEntryRowHtml(e) {
@@ -3230,11 +3447,14 @@ function renderTrainingFormOptions() {
   document.getElementById("exercise-buttons").innerHTML = exOptions.length
     ? exOptions.map(ex => `<button class="chip ${currentExercise===ex?"active-a":""}" data-action="select-exercise" data-val="${esc(ex)}">${esc(ex)}</button>`).join("")
     : '<span class="muted" style="font-size:11px;">未登録(設定タブの「種目マスタ」から追加できます)</span>';
+  // 【重要】種目名は必ずesc()を通す。v48でマスタ登録した自分の種目名(=自由入力)が
+  // この一覧に混ざるようになったため、そのまま埋め込むとHTMLとして解釈されてしまう
+  // (壊れたバックアップJSONを復元したときに、記録やWorkerの合言葉を盗まれる恐れがある)。
   document.getElementById("cardio-buttons").innerHTML = cardioOptionsByUsage().map(c =>
-    `<button class="chip ${selectedCardio===c?"active-b":""}" data-action="select-cardio" data-val="${c}">${c}</button>`).join("");
+    `<button class="chip ${selectedCardio===c?"active-b":""}" data-action="select-cardio" data-val="${esc(c)}">${esc(c)}</button>`).join("");
   document.getElementById("cardio-custom-input").classList.toggle("hidden", selectedCardio !== "その他");
-  document.getElementById("housework-buttons").innerHTML = HOUSEWORK_OPTIONS.map(c =>
-    `<button class="chip ${selectedHousework===c?"active-c":""}" data-action="select-housework" data-val="${c}">${c}</button>`).join("");
+  document.getElementById("housework-buttons").innerHTML = houseworkOptionsByUsage().map(c =>
+    `<button class="chip ${selectedHousework===c?"active-c":""}" data-action="select-housework" data-val="${esc(c)}">${esc(c)}</button>`).join("");
   document.getElementById("housework-custom-input").classList.toggle("hidden", selectedHousework !== "その他");
 
   // 負荷(kg): 初回は20kgを既定値にしつつ、部位・種目に対して前回入力した
@@ -3457,6 +3677,36 @@ function settingsHtml() {
     </div>
 
     <div class="card">
+      ${settingsSectionHeader("masterCardio", "🏃 有酸素・スポーツ マスタ")}
+      <div id="settings-section-masterCardio" class="${settingsOpenSections.masterCardio ? "" : "hidden"}" style="margin-top:10px;">
+        <p class="muted" style="margin:0 0 12px;">テニス・サッカーなど、内蔵の選択肢に無い有酸素運動・スポーツを登録しておくと、「運動」タブの有酸素でワンタップで選べます。✏️で修正できます。</p>
+        <div id="master-cardio-list" style="margin-bottom:8px;"></div>
+        <input type="text" id="master-cardio-name-input" placeholder="例: テニス" style="margin-bottom:8px;">
+        <p class="label" style="margin-bottom:6px;">運動強度</p>
+        <div class="wrap" id="master-cardio-intensity-buttons" style="margin-bottom:4px;"></div>
+        <p id="master-cardio-met-hint" class="muted" style="font-size:10.5px;margin:0 0 8px;"></p>
+        <button type="button" class="chip" data-action="ai-lookup-activity" data-target="cardio" style="margin-bottom:4px;">🔍 AIで運動強度を調べる</button>
+        <p id="ai-lookup-cardio-status" class="muted" style="font-size:10.5px;margin:0 0 8px;"></p>
+        <div class="wrap" id="master-cardio-submit-row"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      ${settingsSectionHeader("masterHousework", "🧹 家事マスタ")}
+      <div id="settings-section-masterHousework" class="${settingsOpenSections.masterHousework ? "" : "hidden"}" style="margin-top:10px;">
+        <p class="muted" style="margin:0 0 12px;">料理など、内蔵の選択肢に無い家事を登録しておくと、「運動」タブの家事でワンタップで選べます。✏️で修正できます。</p>
+        <div id="master-housework-list" style="margin-bottom:8px;"></div>
+        <input type="text" id="master-housework-name-input" placeholder="例: 食器の片付け" style="margin-bottom:8px;">
+        <p class="label" style="margin-bottom:6px;">運動強度</p>
+        <div class="wrap" id="master-housework-intensity-buttons" style="margin-bottom:4px;"></div>
+        <p id="master-housework-met-hint" class="muted" style="font-size:10.5px;margin:0 0 8px;"></p>
+        <button type="button" class="chip" data-action="ai-lookup-activity" data-target="housework" style="margin-bottom:4px;">🔍 AIで運動強度を調べる</button>
+        <p id="ai-lookup-housework-status" class="muted" style="font-size:10.5px;margin:0 0 8px;"></p>
+        <div class="wrap" id="master-housework-submit-row"></div>
+      </div>
+    </div>
+
+    <div class="card">
       ${settingsSectionHeader("data", "データ")}
       <div id="settings-section-data" class="${settingsOpenSections.data ? "" : "hidden"}" style="margin-top:10px;">
         <p class="muted" style="font-size:11px;margin:0 0 8px;line-height:1.5;">記録はこの端末のブラウザに保存されています。iOSがストレージを消すと失われるので、ときどきバックアップを取ってください。</p>
@@ -3497,6 +3747,45 @@ function bindSettingsWidgets() {
   if (activeTab !== "settings") return;
   renderMasterExerciseSection();
   renderMasterMealList();
+  renderMasterCardioSection();
+  renderMasterHouseworkSection();
+}
+// 有酸素・家事マスタの登録フォームで、いま編集中の項目id(nullなら新規登録)。
+let masterCardioEditingId = null;
+let masterHouseworkEditingId = null;
+function renderMasterCardioSection() {
+  const intensityEl = document.getElementById("master-cardio-intensity-buttons");
+  if (!intensityEl) return;
+  intensityEl.innerHTML = ACTIVITY_INTENSITY_LEVELS.map(l =>
+    `<button type="button" class="chip ${masterCardioIntensityKey===l.key?"active":""}" data-action="select-master-cardio-intensity" data-val="${l.key}">${l.label}</button>`).join("");
+  const hintEl = document.getElementById("master-cardio-met-hint");
+  if (hintEl) hintEl.textContent = `運動強度の目安: MET ${masterCardioMet}(数値が大きいほど強度が高い)`;
+  document.getElementById("master-cardio-list").innerHTML = cardioMaster.length
+    ? cardioMaster.map(c => `<div class="entry-row"><span style="flex:1;">${esc(c.name)} <span class="mono muted">MET ${esc(c.met)}</span></span><button class="del-btn" data-action="edit-cardio-master" data-id="${esc(c.id)}">✏️</button><button class="del-btn" data-action="del-cardio-master" data-id="${esc(c.id)}">🗑️</button></div>`).join("")
+    : '<p class="muted" style="font-size:11px;">まだ登録がありません。</p>';
+  const submitEl = document.getElementById("master-cardio-submit-row");
+  if (submitEl) {
+    submitEl.innerHTML = masterCardioEditingId
+      ? `<button type="button" class="chip" data-action="add-cardio-master">✔️ 更新する</button><button type="button" class="chip" data-action="cancel-cardio-master-edit">キャンセル</button>`
+      : `<button type="button" class="chip" data-action="add-cardio-master">＋ 追加</button>`;
+  }
+}
+function renderMasterHouseworkSection() {
+  const intensityEl = document.getElementById("master-housework-intensity-buttons");
+  if (!intensityEl) return;
+  intensityEl.innerHTML = ACTIVITY_INTENSITY_LEVELS.map(l =>
+    `<button type="button" class="chip ${masterHouseworkIntensityKey===l.key?"active":""}" data-action="select-master-housework-intensity" data-val="${l.key}">${l.label}</button>`).join("");
+  const hintEl = document.getElementById("master-housework-met-hint");
+  if (hintEl) hintEl.textContent = `運動強度の目安: MET ${masterHouseworkMet}(数値が大きいほど強度が高い)`;
+  document.getElementById("master-housework-list").innerHTML = houseworkMaster.length
+    ? houseworkMaster.map(c => `<div class="entry-row"><span style="flex:1;">${esc(c.name)} <span class="mono muted">MET ${esc(c.met)}</span></span><button class="del-btn" data-action="edit-housework-master" data-id="${esc(c.id)}">✏️</button><button class="del-btn" data-action="del-housework-master" data-id="${esc(c.id)}">🗑️</button></div>`).join("")
+    : '<p class="muted" style="font-size:11px;">まだ登録がありません。</p>';
+  const submitEl = document.getElementById("master-housework-submit-row");
+  if (submitEl) {
+    submitEl.innerHTML = masterHouseworkEditingId
+      ? `<button type="button" class="chip" data-action="add-housework-master">✔️ 更新する</button><button type="button" class="chip" data-action="cancel-housework-master-edit">キャンセル</button>`
+      : `<button type="button" class="chip" data-action="add-housework-master">＋ 追加</button>`;
+  }
 }
 function renderMasterExerciseSection() {
   const partEl = document.getElementById("master-ex-part-buttons");
@@ -4054,15 +4343,111 @@ document.getElementById("app").addEventListener("click", (e) => {
     mealMaster = mealMaster.filter(m => m.id !== t.dataset.id);
     saveState(); renderMasterMealList();
   }
+  else if (action === "ai-lookup-activity") { aiLookupActivityMet(t.dataset.target); }
+  else if (action === "select-master-cardio-intensity") {
+    const level = ACTIVITY_INTENSITY_LEVELS.find(l => l.key === t.dataset.val);
+    if (level) { masterCardioIntensityKey = level.key; masterCardioMet = level.met; renderMasterCardioSection(); }
+  }
+  else if (action === "select-master-housework-intensity") {
+    const level = ACTIVITY_INTENSITY_LEVELS.find(l => l.key === t.dataset.val);
+    if (level) { masterHouseworkIntensityKey = level.key; masterHouseworkMet = level.met; renderMasterHouseworkSection(); }
+  }
+  else if (action === "add-cardio-master") {
+    const nameInp = document.getElementById("master-cardio-name-input");
+    const name = nameInp.value.trim();
+    if (!name) return;
+    if (masterCardioEditingId) {
+      const x = cardioMaster.find(c => c.id === masterCardioEditingId);
+      if (x) { x.name = name; x.met = masterCardioMet; }
+      masterCardioEditingId = null;
+    } else {
+      cardioMaster.push({ id: uid(), name, met: masterCardioMet });
+    }
+    nameInp.value = "";
+    masterCardioIntensityKey = DEFAULT_ACTIVITY_INTENSITY;
+    masterCardioMet = ACTIVITY_INTENSITY_LEVELS.find(l => l.key === DEFAULT_ACTIVITY_INTENSITY).met;
+    const statusEl = document.getElementById("ai-lookup-cardio-status");
+    if (statusEl) statusEl.textContent = "";
+    saveState(); renderMasterCardioSection();
+  }
+  else if (action === "edit-cardio-master") {
+    const x = cardioMaster.find(c => c.id === t.dataset.id);
+    if (!x) return;
+    masterCardioEditingId = x.id;
+    masterCardioMet = x.met;
+    masterCardioIntensityKey = closestIntensityKey_(x.met);
+    const nameInp = document.getElementById("master-cardio-name-input");
+    if (nameInp) nameInp.value = x.name;
+    renderMasterCardioSection();
+  }
+  else if (action === "cancel-cardio-master-edit") {
+    masterCardioEditingId = null;
+    masterCardioIntensityKey = DEFAULT_ACTIVITY_INTENSITY;
+    masterCardioMet = ACTIVITY_INTENSITY_LEVELS.find(l => l.key === DEFAULT_ACTIVITY_INTENSITY).met;
+    const nameInp = document.getElementById("master-cardio-name-input");
+    if (nameInp) nameInp.value = "";
+    renderMasterCardioSection();
+  }
+  else if (action === "del-cardio-master") {
+    cardioMaster = cardioMaster.filter(c => c.id !== t.dataset.id);
+    if (masterCardioEditingId === t.dataset.id) masterCardioEditingId = null;
+    saveState(); renderMasterCardioSection();
+  }
+  else if (action === "add-housework-master") {
+    const nameInp = document.getElementById("master-housework-name-input");
+    const name = nameInp.value.trim();
+    if (!name) return;
+    if (masterHouseworkEditingId) {
+      const x = houseworkMaster.find(c => c.id === masterHouseworkEditingId);
+      if (x) { x.name = name; x.met = masterHouseworkMet; }
+      masterHouseworkEditingId = null;
+    } else {
+      houseworkMaster.push({ id: uid(), name, met: masterHouseworkMet });
+    }
+    nameInp.value = "";
+    masterHouseworkIntensityKey = DEFAULT_ACTIVITY_INTENSITY;
+    masterHouseworkMet = ACTIVITY_INTENSITY_LEVELS.find(l => l.key === DEFAULT_ACTIVITY_INTENSITY).met;
+    const statusEl = document.getElementById("ai-lookup-housework-status");
+    if (statusEl) statusEl.textContent = "";
+    saveState(); renderMasterHouseworkSection();
+  }
+  else if (action === "edit-housework-master") {
+    const x = houseworkMaster.find(c => c.id === t.dataset.id);
+    if (!x) return;
+    masterHouseworkEditingId = x.id;
+    masterHouseworkMet = x.met;
+    masterHouseworkIntensityKey = closestIntensityKey_(x.met);
+    const nameInp = document.getElementById("master-housework-name-input");
+    if (nameInp) nameInp.value = x.name;
+    renderMasterHouseworkSection();
+  }
+  else if (action === "cancel-housework-master-edit") {
+    masterHouseworkEditingId = null;
+    masterHouseworkIntensityKey = DEFAULT_ACTIVITY_INTENSITY;
+    masterHouseworkMet = ACTIVITY_INTENSITY_LEVELS.find(l => l.key === DEFAULT_ACTIVITY_INTENSITY).met;
+    const nameInp = document.getElementById("master-housework-name-input");
+    if (nameInp) nameInp.value = "";
+    renderMasterHouseworkSection();
+  }
+  else if (action === "del-housework-master") {
+    houseworkMaster = houseworkMaster.filter(c => c.id !== t.dataset.id);
+    if (masterHouseworkEditingId === t.dataset.id) masterHouseworkEditingId = null;
+    saveState(); renderMasterHouseworkSection();
+  }
   else if (action === "reset-show") { confirmReset = true; renderTabContent(); }
   else if (action === "reset-no") { confirmReset = false; renderTabContent(); }
   else if (action === "reset-yes-keep-sheet") {
     entries = []; weightEntries = []; mealEntries = []; goals = { weight: 65, weeklyFreq: 3, paceKgPerWeek: DEFAULT_PACE, goalType: DEFAULT_GOAL_TYPE };
     profile = null; moodByDate = {}; confirmReset = false; onboardStep = 0;
-    exerciseMaster = []; mealMaster = []; masterExercisePart = "胸";
+    exerciseMaster = []; mealMaster = []; cardioMaster = []; houseworkMaster = []; masterExercisePart = "胸";
+    masterCardioEditingId = null; masterHouseworkEditingId = null;
+    masterCardioIntensityKey = DEFAULT_ACTIVITY_INTENSITY; masterHouseworkIntensityKey = DEFAULT_ACTIVITY_INTENSITY;
+    masterCardioMet = ACTIVITY_INTENSITY_LEVELS.find(l => l.key === DEFAULT_ACTIVITY_INTENSITY).met;
+    masterHouseworkMet = ACTIVITY_INTENSITY_LEVELS.find(l => l.key === DEFAULT_ACTIVITY_INTENSITY).met;
     lastStrengthByExercise = {}; lastCardioMinutes = {}; lastHouseworkMinutes = {}; mealDetailOpen = false;
     entryDates = { meal: null, weight: null, training: null };
     nutritionCache = {}; saveNutritionCache();
+    activityMetCache = {}; saveActivityMetCache();
     seedExerciseMasterIfEmpty();
     onboardDraft = { age:"", gender:"男性", height:"", weight:"", goalWeight:"", weeklyFreq:"" };
     // 本人の意思で消したので、壊れて読めなかった場合の警告は取り下げる。
@@ -4172,6 +4557,7 @@ loadState();
 // (loadStateより前に決めると、まだ記録が無い状態で判定してしまうためこの位置)。
 selectedCardio = defaultCardio();
 loadNutritionCache();
+loadActivityMetCache();
 // 電波が届かない場所(地下のジム・機内モード)でもアプリを起動できるようにする(v44)。
 // sw.js は index.html と同じ場所に置いてください。
 // ファイルをそのまま開いた場合(file://)やHTTPS以外では登録できないので、その時は何もしない。
