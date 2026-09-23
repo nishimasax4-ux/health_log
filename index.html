@@ -1,4 +1,4 @@
-<!-- ヘルスログ バージョン: v1.8(設定タブ下部にも同じ番号が表示されます。更新のたびに
+<!-- ヘルスログ バージョン: v1.9(設定タブ下部にも同じ番号が表示されます。更新のたびに
      ここと下のAPP_VERSION、sw.jsのVERSION、README.mdの版数表記を揃えて上げてください) -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -168,7 +168,7 @@ const WORKER_URL = "https://health-log-ai.nishimasax4.workers.dev";
 const WORKER_TOKEN = "hS4%IpejF6842XppRBJz";
 function workerConfigured() { return !!WORKER_URL; }
 // アプリのバージョン番号。更新のたびに増やし、設定タブ下部に表示します。
-const APP_VERSION = "v1.8";
+const APP_VERSION = "v1.9";
 
 const STORAGE_KEY = "health-log-data";
 const PARTS = ["胸","背中","脚","肩","腕","腹筋"];
@@ -219,6 +219,28 @@ function cardioMetFor_(name) {
   const custom = cardioMaster.find(c => c.name === name);
   if (custom && custom.met) return custom.met;
   return CARDIO_MET[name] || CARDIO_MET["その他"];
+}
+// ---- 歩数からウォーキングを記録する機能(v1.9) ----
+// 「歩幅(cm) ≈ 身長(cm) × 0.45」という、歩数計アプリでよく使われる目安で距離を概算する
+// (厳密な歩幅は歩き方や年齢で個人差があるが、プロフィールの身長だけから概算する簡易機能
+// として割り切っている)。
+const STRIDE_RATIO = 0.45;
+// 距離→時間の変換に使う歩行ペース。内蔵のウォーキングMET(3.5)が前提とする速度
+// (Compendium of Physical Activitiesの「3.0mph(≈4.8km/h)」)に揃えることで、歩数から
+// 計算した時間を使っても、時間を直接入力したときと同じ式(MET×3.5×体重/200×分)で
+// 矛盾なく消費カロリーが出せるようにしている。
+const STEPS_WALK_SPEED_KMH = 4.8;
+function strideMetersFromHeight_(heightCm) {
+  const h = Number(heightCm) || 165; // プロフィール未登録時などの保険
+  return (h * STRIDE_RATIO) / 100;
+}
+// 歩数と身長から、距離(km)・換算時間(分)・歩幅(m)を概算する。
+function walkStatsFromSteps_(steps, heightCm) {
+  const strideM = strideMetersFromHeight_(heightCm);
+  const s = Math.max(0, Number(steps) || 0);
+  const distanceKm = (s * strideM) / 1000;
+  const minutes = (distanceKm / STEPS_WALK_SPEED_KMH) * 60;
+  return { distanceKm, minutes, strideM };
 }
 function houseworkMetFor_(name) {
   const custom = houseworkMaster.find(c => c.name === name);
@@ -285,6 +307,7 @@ const CORE_STRETCH_IDS = STRETCH_ITEMS.filter(i => i.core).map(i => i.id);
 const STRENGTH_KCAL_PER_SET = 10; // 筋トレ1セットあたりの消費カロリー概算(目安)
 const REP_QUICK_OPTIONS = [10,20,30,40,50]; // 回数のワンタップ候補(10回刻み・50回まで)。これ以外の回数は入力欄に直接入力できます
 const MINUTE_QUICK_OPTIONS = [15,30,45,60]; // 有酸素の時間のワンタップ候補(分)。これ以外の時間は入力欄に直接入力できます
+const STEPS_QUICK_OPTIONS = [3000,5000,8000,10000]; // 歩数入力のワンタップ候補(v1.9)。これ以外の歩数は入力欄に直接入力できます
 const MEAL_TYPES = ["朝食","昼食","夕食","間食"];
 // 内蔵の食品カロリー概算表(外部APIには接続しません)。
 // 数値はすべて一般的な目安量あたりのおおよその値です(kcal, protein/fat/carbはg)。
@@ -394,6 +417,7 @@ let activeTab = "today"; // today | meals | weight | training | stretch | settin
 let trainingSubTab = "strength"; // strength | cardio | housework
 let selectedPart = "胸";
 let selectedCardio = "ランニング";
+let cardioInputMode = "minutes"; // "minutes" | "steps" (v1.9。有酸素の入力方法。歩数のときはウォーキング固定で記録する)
 let selectedHousework = "掃除機がけ";
 let selectedMealType = "朝食";
 let masterExercisePart = "胸"; // which part's tab is active in the master-data editor
@@ -2276,7 +2300,7 @@ function sanitizeRecords_(list, strFields, numFields) {
   });
 }
 function sanitizeImported_(data) {
-  data.entries = sanitizeRecords_(data.entries, ["id","date","type","part","exercise"], ["reps","weight","minutes"]);
+  data.entries = sanitizeRecords_(data.entries, ["id","date","type","part","exercise"], ["reps","weight","minutes","steps","distanceKm"]);
   data.weightEntries = sanitizeRecords_(data.weightEntries, ["date"], ["weight","bodyFat","waist"]);
   data.mealEntries = sanitizeRecords_(data.mealEntries, ["id","date","mealType","text"], ["calories","protein","fat","carb"]);
   data.exerciseMaster = sanitizeRecords_(data.exerciseMaster, ["id","part","name"], []);
@@ -3399,12 +3423,25 @@ function trainingHtml() {
         <div class="wrap" id="reps-quick-buttons" style="margin-bottom:10px;"></div>
       </div>
       <div id="cardio-fields" class="${trainingSubTab==="cardio"?"":"hidden"}">
-        <label class="label">種目</label>
-        <div class="wrap" id="cardio-buttons" style="margin-bottom:8px;"></div>
-        <input type="text" id="cardio-custom-input" placeholder="種目名を入力" class="hidden" style="margin-bottom:8px;">
-        <label class="label">時間 (分)</label>
-        <input type="number" id="minutes-input" placeholder="分" class="mono" style="margin-bottom:8px;">
-        <div class="wrap" id="minutes-quick-buttons" style="margin-bottom:10px;"></div>
+        <div class="row" style="margin-bottom:10px;">
+          <button type="button" class="chip ${cardioInputMode==="minutes"?"active-b":""}" data-action="select-cardio-input-mode" data-val="minutes">⏱ 時間で入力</button>
+          <button type="button" class="chip ${cardioInputMode==="steps"?"active-b":""}" data-action="select-cardio-input-mode" data-val="steps">🚶 歩数で入力</button>
+        </div>
+        <div id="cardio-minutes-mode" class="${cardioInputMode==="minutes"?"":"hidden"}">
+          <label class="label">種目</label>
+          <div class="wrap" id="cardio-buttons" style="margin-bottom:8px;"></div>
+          <input type="text" id="cardio-custom-input" placeholder="種目名を入力" class="hidden" style="margin-bottom:8px;">
+          <label class="label">時間 (分)</label>
+          <input type="number" id="minutes-input" placeholder="分" class="mono" style="margin-bottom:8px;">
+          <div class="wrap" id="minutes-quick-buttons" style="margin-bottom:10px;"></div>
+        </div>
+        <div id="cardio-steps-mode" class="${cardioInputMode==="steps"?"":"hidden"}">
+          <p class="muted" style="font-size:11px;margin:0 0 8px;line-height:1.6;">歩数から「ウォーキング」として記録します。設定タブに登録した身長から歩幅を概算し、距離・時間に換算します。</p>
+          <label class="label">歩数</label>
+          <input type="number" id="steps-input" placeholder="歩" class="mono" style="margin-bottom:8px;">
+          <div class="wrap" id="steps-quick-buttons" style="margin-bottom:10px;"></div>
+          <div id="steps-preview" class="muted" style="font-size:11.5px;line-height:1.7;margin-bottom:4px;"></div>
+        </div>
       </div>
       <div id="housework-fields" class="${trainingSubTab==="housework"?"":"hidden"}">
         <label class="label">内容</label>
@@ -3515,7 +3552,7 @@ function trainingEntryRowHtml(e) {
   const burn = estimateEntryBurn_(e, latestWeight ? latestWeight.weight : null);
   const detail = isStrength
     ? `<span style="font-weight:600;">[${esc(e.part)}]</span>${e.exercise ? " "+esc(e.exercise) : ""} <span class="mono" style="color:var(--sand);">${e.weight}kg × ${e.reps}</span>`
-    : `${esc(e.exercise)} <span class="mono" style="color:var(--sand);">${e.minutes}分</span>`;
+    : `${esc(e.exercise)} <span class="mono" style="color:var(--sand);">${e.minutes}分</span>${e.steps ? ` <span class="mono muted">(${Number(e.steps).toLocaleString()}歩・${Number(e.distanceKm||0).toFixed(1)}km)</span>` : ""}`;
   return `<div class="entry-row">
     <div class="badge" style="background:${isStrength ? "var(--coral-soft)" : isHousework ? "var(--sand-soft)" : "var(--slate-soft)"};">${isStrength ? "🏋️" : isHousework ? "🧹" : "💨"}</div>
     <div style="flex:1;">${detail}${burn ? ` <span class="mono muted">(約${burn}kcal)</span>` : ""}</div>
@@ -3642,6 +3679,32 @@ function bindTrainingFormWidgets() {
   renderTrainingFormOptions();
   renderHistory();
 }
+// 歩数モード(v1.9): 歩数→距離→時間に変換し、既存のminutes-inputへ書き込む。
+// こうしておくことで、記録処理(handleAddTraining)や前回値の提案などの既存の仕組みを
+// そのまま使い回せる(「時間を直接入力したのと同じ扱い」になる)。
+function updateStepsPreview() {
+  const stepsInput = document.getElementById("steps-input");
+  if (!stepsInput) return; // 有酸素タブを開いていない、または時間入力モードのときは何もしない
+  const minutesInput = document.getElementById("minutes-input");
+  const previewEl = document.getElementById("steps-preview");
+  const stepsQuickEl = document.getElementById("steps-quick-buttons");
+  const steps = Number(stepsInput.value) || 0;
+  if (stepsQuickEl) {
+    stepsQuickEl.innerHTML = STEPS_QUICK_OPTIONS.map(s =>
+      `<button type="button" class="chip ${String(s)===String(steps)?"active-b":""}" data-action="select-steps" data-val="${s}">${s.toLocaleString()}歩</button>`).join("");
+  }
+  const heightCm = profile ? profile.height : null;
+  const { distanceKm, minutes } = walkStatsFromSteps_(steps, heightCm);
+  const roundedMinutes = steps > 0 ? Math.max(1, Math.round(minutes)) : 0;
+  if (minutesInput) minutesInput.value = roundedMinutes || "";
+  if (!previewEl) return;
+  if (steps <= 0) { previewEl.textContent = ""; return; }
+  const met = cardioMetFor_("ウォーキング");
+  const latestWeight = [...weightEntries].sort((a,b) => a.date < b.date ? 1 : -1)[0];
+  const weightKg = latestWeight ? latestWeight.weight : 60;
+  const kcal = Math.round((met * 3.5 * weightKg / 200) * roundedMinutes);
+  previewEl.innerHTML = `${steps.toLocaleString()}歩 ≈ <span class="mono">${distanceKm.toFixed(1)}km</span> ≈ <span class="mono">${roundedMinutes}分</span>のウォーキング(約<span class="mono">${kcal}</span>kcal)${!profile || !profile.height ? `<br>※身長が未登録のため、仮の値(165cm)で計算しています。設定タブで身長を登録すると精度が上がります。` : ""}`;
+}
 function renderTrainingFormOptions() {
   const partEl = document.getElementById("part-buttons");
   if (!partEl) return;
@@ -3713,6 +3776,7 @@ function renderTrainingFormOptions() {
     minutesQuickEl.innerHTML = MINUTE_QUICK_OPTIONS.map(m =>
       `<button type="button" class="chip ${String(m)===String(currentMinutes)?"active-b":""}" data-action="select-minutes" data-val="${m}">${m}分</button>`).join("");
   }
+  updateStepsPreview();
 
   // 家事の時間(分): 有酸素と同じ考え方で、内容ごとに前回の分数を覚えておく。
   const houseworkMinutesInput = document.getElementById("housework-minutes-input");
@@ -4149,6 +4213,9 @@ function handleEditSave() {
       if (ex) e.exercise = ex;
       const minutes = Number(document.getElementById("edit-minutes").value);
       if (minutes > 0) e.minutes = minutes;
+      // この編集フォームには歩数の欄が無いため、手で時間を直接編集したら歩数由来の
+      // 参考情報(何歩・何kmだったか)は古くなる。表示が食い違わないよう消しておく。
+      delete e.steps; delete e.distanceKm;
     }
   } else if (editing.kind === "weight") {
     const w = weightEntries.find(x => x.date === editing.date);
@@ -4236,12 +4303,22 @@ function handleAddTraining() {
   } else if (trainingSubTab === "cardio") {
     const minutes = document.getElementById("minutes-input").value;
     if (!minutes) return;
+    // 歩数モード(v1.9): 歩数と、その時点の換算距離を記録に添えておく(履歴に「6,000歩・
+    // 4.6km」のように表示するための参考情報。カロリー計算自体は他と同じくminutesを使う)。
+    let stepsMeta = {};
+    if (cardioInputMode === "steps") {
+      const stepsVal = Number(document.getElementById("steps-input").value) || 0;
+      if (stepsVal > 0) {
+        const heightCm = profile ? profile.height : null;
+        stepsMeta = { steps: stepsVal, distanceKm: Math.round(walkStatsFromSteps_(stepsVal, heightCm).distanceKm * 100) / 100 };
+      }
+    }
     const customVal = document.getElementById("cardio-custom-input").value.trim();
     if (selectedCardio === "その他" && !customVal) return;
     const exercise = selectedCardio === "その他" ? customVal : selectedCardio;
     entries.unshift({
       id: uid(), date, type: "cardio", createdAt: Date.now(),
-      exercise, minutes: Number(minutes),
+      exercise, minutes: Number(minutes), ...stepsMeta,
     });
     // 次回同じ種目を選んだときに、今回の時間を提案できるよう覚えておく。
     lastCardioMinutes[selectedCardio === "その他" ? customVal : selectedCardio] = Number(minutes);
@@ -4593,6 +4670,17 @@ document.getElementById("app").addEventListener("click", (e) => {
   else if (action === "select-part") { selectedPart = t.dataset.val; renderTrainingFormOptions(); }
   else if (action === "select-exercise") { document.getElementById("exercise-input").value = t.dataset.val; renderTrainingFormOptions(); }
   else if (action === "select-cardio") { selectedCardio = t.dataset.val; renderTrainingFormOptions(); }
+  else if (action === "select-cardio-input-mode") {
+    cardioInputMode = t.dataset.val;
+    // 歩数モードに切り替えたら、種目は自動的に「ウォーキング」として記録する
+    // (距離→カロリーの換算自体がウォーキング前提の計算のため)。
+    if (cardioInputMode === "steps") selectedCardio = "ウォーキング";
+    renderTabContent();
+  }
+  else if (action === "select-steps") {
+    const stepsInput = document.getElementById("steps-input");
+    if (stepsInput) { stepsInput.value = t.dataset.val; updateStepsPreview(); }
+  }
   else if (action === "select-housework") { selectedHousework = t.dataset.val; renderTrainingFormOptions(); }
   else if (action === "weight-step") {
     const inp = document.getElementById("weight-input");
@@ -4930,6 +5018,8 @@ document.getElementById("app").addEventListener("input", (e) => {
       if (el) el.innerHTML = MINUTE_QUICK_OPTIONS.map(m =>
         `<button type="button" class="chip ${String(m)===String(e.target.value)?"active-c":""}" data-action="select-housework-minutes" data-val="${m}">${m}分</button>`).join("");
     }
+  } else if (e.target.id === "steps-input") {
+    updateStepsPreview();
   }
 });
 // 日付欄を変えたら、その日付を覚えておく(1件記録するたびに今日へ戻らないように)。
