@@ -1,4 +1,4 @@
-<!-- ヘルスログ バージョン: v1.7(設定タブ下部にも同じ番号が表示されます。更新のたびに
+<!-- ヘルスログ バージョン: v1.8(設定タブ下部にも同じ番号が表示されます。更新のたびに
      ここと下のAPP_VERSION、sw.jsのVERSION、README.mdの版数表記を揃えて上げてください) -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -168,7 +168,7 @@ const WORKER_URL = "https://health-log-ai.nishimasax4.workers.dev";
 const WORKER_TOKEN = "hS4%IpejF6842XppRBJz";
 function workerConfigured() { return !!WORKER_URL; }
 // アプリのバージョン番号。更新のたびに増やし、設定タブ下部に表示します。
-const APP_VERSION = "v1.7";
+const APP_VERSION = "v1.8";
 
 const STORAGE_KEY = "health-log-data";
 const PARTS = ["胸","背中","脚","肩","腕","腹筋"];
@@ -233,49 +233,51 @@ function houseworkMetFor_(name) {
 // 【互換性メモ】連続記録(streak)の判定は「core:trueの項目が全部そろっているか」で
 // 見ており、STRETCH_ITEMS全体の件数は見ていない。そのため今後この配列に項目を増やしても、
 // 過去に付けた連続記録が急に途切れて見えることはない。
+// timerSec: ⏱ タイマーで区切る目安秒数(v1.8)。「how」欄に書いたキープ時間の
+// 目安から決めている(左右がある項目は片側ぶんの秒数。両方やる場合は2回タイマーを回す想定)。
 const STRETCH_ITEMS = [
   // --- 毎日の基本セット(streakの対象) ---
-  { id: "chest", core: true, category: "上半身",
+  { id: "chest", core: true, category: "上半身", timerSec: 25,
     label: "胸を開くストレッチ(肩甲骨寄せ)",
     how: "両手を体の後ろで組み、肩甲骨を寄せながら腕をゆっくり持ち上げる。胸の前面が伸びる感覚を確認しながら20〜30秒キープ。" },
-  { id: "neckshoulder", core: true, category: "上半身",
+  { id: "neckshoulder", core: true, category: "上半身", timerSec: 20,
     label: "首・肩回し",
     how: "肩をすくめるように持ち上げてから、大きく後ろに回す。続けて首をゆっくり左右・前後に倒し、それぞれ10〜15秒かけて伸ばす。" },
-  { id: "hipflexor", core: true, category: "下半身",
+  { id: "hipflexor", core: true, category: "下半身", timerSec: 25,
     label: "股関節屈筋のストレッチ(前後開脚)",
     how: "片足を大きく前に踏み出してランジの姿勢を取り、後ろ足の付け根を床に近づけるように腰を落とす。後ろ足側の股関節前面が伸びる感覚を確認しながら20〜30秒。左右入れ替える。" },
-  { id: "quad", core: true, category: "下半身",
+  { id: "quad", core: true, category: "下半身", timerSec: 25,
     label: "太もも前面(大腿四頭筋)",
     how: "壁や椅子に手を添えて片足立ちになり、反対側の足首をつかんでかかとをお尻に近づける。太もも前面が伸びる感覚を確認しながら20〜30秒。左右入れ替える。" },
-  { id: "hamstring", core: true, category: "下半身",
+  { id: "hamstring", core: true, category: "下半身", timerSec: 25,
     label: "ハムストリングス",
     how: "椅子に浅く座るか床に座り、片足を前に伸ばして膝を軽く伸ばしたまま上体を前に倒す。太もも裏が伸びる感覚を確認しながら20〜30秒。左右入れ替える。" },
-  { id: "calf", core: true, category: "下半身",
+  { id: "calf", core: true, category: "下半身", timerSec: 25,
     label: "ふくらはぎ",
     how: "壁に手をつき、片足を大きく後ろに引いてかかとを床につけたまま体重を前にかける。ふくらはぎが伸びる感覚を確認しながら20〜30秒。左右入れ替える。" },
-  { id: "backhip", core: true, category: "体幹・全身",
+  { id: "backhip", core: true, category: "体幹・全身", timerSec: 25,
     label: "腰・背中(膝抱えストレッチ)",
     how: "仰向けに寝て両膝を胸に抱え込み、腰・お尻が伸びる感覚を感じながら20〜30秒キープ。呼吸を止めずゆっくりと。" },
   // --- おすすめ(道具なし・1人でできる。streakには含めない) ---
-  { id: "lats", core: false, category: "上半身",
+  { id: "lats", core: false, category: "上半身", timerSec: 18,
     label: "広背筋・体側のストレッチ",
     how: "両手を頭上で組んでバンザイの姿勢を取り、上体をゆっくり真横に倒す。体側から脇腹にかけて伸びる感覚を確認しながら15〜20秒。左右入れ替える。" },
-  { id: "triceps", core: false, category: "上半身",
+  { id: "triceps", core: false, category: "上半身", timerSec: 18,
     label: "二の腕(上腕三頭筋)のストレッチ",
     how: "片腕を頭の後ろに上げて肘を曲げ、反対の手で肘を軽く押さえて後方に引く。二の腕の裏側が伸びる感覚を確認しながら15〜20秒。左右入れ替える。" },
-  { id: "wrist", core: false, category: "上半身",
+  { id: "wrist", core: false, category: "上半身", timerSec: 15,
     label: "手首・前腕のストレッチ",
     how: "片腕を前に伸ばし、手のひらを上に向けて反対の手で指先を軽く手前に引く。次に手のひらを下に向けて同様に。それぞれ10〜15秒。左右入れ替える。" },
-  { id: "innerthigh", core: false, category: "下半身",
+  { id: "innerthigh", core: false, category: "下半身", timerSec: 25,
     label: "内もものストレッチ",
     how: "床に座って両足の裏を合わせ、膝を外側に開く。かかとを体に近づけながら、両膝をゆっくり床に近づけるように上体を前に倒す。内ももが伸びる感覚を確認しながら20〜30秒。" },
-  { id: "ankle", core: false, category: "下半身",
+  { id: "ankle", core: false, category: "下半身", timerSec: 15,
     label: "足首回し・アキレス腱のストレッチ",
     how: "椅子に座るか壁に手をついて、片足のつま先を床につけたまま足首を大きく10回ほど回す。続けて壁に手をついて片足を後ろに引き、アキレス腱を伸ばして15秒キープ。左右入れ替える。" },
-  { id: "spinaltwist", core: false, category: "体幹・全身",
+  { id: "spinaltwist", core: false, category: "体幹・全身", timerSec: 18,
     label: "座ったまま体幹ひねり",
     how: "椅子に浅く座り、背筋を伸ばしたまま上体だけをゆっくり片方にひねる。椅子の背もたれや座面に軽く手を添えてひねりを深め、15〜20秒キープして反対側も。" },
-  { id: "catcow", core: false, category: "体幹・全身",
+  { id: "catcow", core: false, category: "体幹・全身", timerSec: 30,
     label: "背骨のストレッチ(キャット&カウ)",
     how: "四つばいの姿勢になり、息を吸いながら背中を反らせ(カウ)、息を吐きながら背中を丸める(キャット)。ゆっくり5〜8回繰り返す。" },
 ];
@@ -380,6 +382,13 @@ let lastStrengthByExercise = {}; // "種目名"(または"(部位)") -> {reps, w
 let lastCardioMinutes = {}; // 有酸素の種目名 -> 直近の分数
 let lastHouseworkMinutes = {}; // 家事の内容 -> 直近の分数
 let stretchLog = {}; // "YYYY-MM-DD" -> [itemId, ...] その日にチェック済みのストレッチ項目ID一覧(v1.7)
+// ストレッチタイマーの実行中の状態(v1.8)。「今の画面状態」であって記録データそのものでは
+// ないため、localStorageには保存しない(スマホを閉じてもキリのいい秒数から再開できるわけ
+// ではないので、保存してもかえって混乱するため)。
+let stretchTimer = null; // { itemId, remaining, intervalId } | null
+// ストレッチの記録カレンダーが表示中の月(v1.8)。運動タブの履歴カレンダー(calMonth)とは
+// 状態を共有しない(片方をめくるともう片方も動いてしまう、という事故を防ぐため専用に持つ)。
+let stretchCalMonth = (() => { const d = new Date(); d.setDate(1); d.setHours(0,0,0,0); return d; })();
 
 let activeTab = "today"; // today | meals | weight | training | stretch | settings
 let trainingSubTab = "strength"; // strength | cardio | housework
@@ -2780,6 +2789,9 @@ function autoSelectMealTypeByTime() {
   else selectedMealType = "夕食";
 }
 function switchTab(tab) {
+  // ストレッチタブから離れるときはタイマーを止める(離れている間もカウントが進み、
+  // 戻ってきたら勝手に完了扱いになっていた、という驚きを防ぐため)。
+  if (activeTab === "stretch" && tab !== "stretch") stopStretchTimer();
   activeTab = tab;
   if (tab === "meals") autoSelectMealTypeByTime();
   renderTabContent();
@@ -4324,10 +4336,12 @@ function yesterdayMealTypesAvailable() {
   return MEAL_TYPES.filter(t => mealEntries.some(m => m.date === y && m.mealType === t));
 }
 
-// ============ ストレッチタブ(v1.7) ============
+// ============ ストレッチタブ(v1.7・v1.8で①タイマー②今日のおすすめ3つ③記録カレンダーを追加) ============
 // STRETCH_ITEMSを日付ごとにチェックできるようにする。運動の記録(entries)とは
 // 別に、その日チェック済みの項目IDだけをstretchLogに保存する。
 function toggleStretchItem(date, itemId) {
+  // チェック/解除した項目のタイマーが動いていたら、記録と食い違わないよう止める。
+  if (stretchTimer && stretchTimer.itemId === itemId) stopStretchTimer();
   const done = new Set(stretchLog[date] || []);
   if (done.has(itemId)) done.delete(itemId); else done.add(itemId);
   stretchLog[date] = Array.from(done);
@@ -4353,17 +4367,162 @@ function stretchStreak() {
   }
   return streak;
 }
-// チェック項目1件ぶんの行(チェックボックス + 名前 + やり方)。基本セット・おすすめ共通。
+
+// ---- ① ストレッチタイマー(v1.8) ----
+// stretchTimerは「今の画面状態」であって記録データそのものではないため、localStorageには
+// 保存しない。毎秒の更新は画面全体を再描画せず、カウントダウン表示のDOMだけを直接書き換える
+// (全体再描画はチラつきや他操作との競合のもとになるため)。同じ項目が「今日のおすすめ」欄と
+// 通常のリストの両方に出ていることがあるので、data-stretch-timer-display属性を持つ要素は
+// querySelectorAllで全部まとめて更新する。
+function startStretchTimer(itemId) {
+  stopStretchTimer();
+  const item = STRETCH_ITEMS.find(i => i.id === itemId);
+  if (!item) return;
+  stretchTimer = { itemId, remaining: item.timerSec, intervalId: null };
+  renderTabContent(); // ボタン→カウントダウン表示への切り替えは、開始時だけ全体再描画する
+  stretchTimer.intervalId = setInterval(() => {
+    if (!stretchTimer || stretchTimer.itemId !== itemId) { clearInterval(stretchTimer && stretchTimer.intervalId); return; }
+    stretchTimer.remaining--;
+    if (stretchTimer.remaining > 0) {
+      document.querySelectorAll(`[data-stretch-timer-display="${itemId}"]`).forEach(el => {
+        el.textContent = `残り${stretchTimer.remaining}秒`;
+      });
+    } else {
+      clearInterval(stretchTimer.intervalId);
+      stretchTimer = null;
+      playStretchTimerSound();
+      if (navigator.vibrate) { try { navigator.vibrate([150, 80, 150]); } catch (e) {} }
+      const today = localDateStr();
+      const done = new Set(stretchLog[today] || []);
+      done.add(itemId);
+      stretchLog[today] = Array.from(done);
+      saveState();
+      renderTabContent();
+    }
+  }, 1000);
+}
+// 手動で止める場合・他の項目のタイマーを新しく始める場合・タブを離れる場合・画面がバック
+// グラウンドに回った場合、のいずれでも呼ばれる。「離れている間もカウントが進み、戻ってきたら
+// 勝手に完了扱いになっていた」という驚きを防ぐため、途中で止めても完了にはしない。
+function stopStretchTimer() {
+  if (stretchTimer && stretchTimer.intervalId) clearInterval(stretchTimer.intervalId);
+  stretchTimer = null;
+}
+function playStretchTimerSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.frequency.value = 880;
+    g.gain.setValueAtTime(0.15, ctx.currentTime);
+    o.start();
+    o.stop(ctx.currentTime + 0.3);
+    o.onended = () => ctx.close();
+  } catch (e) { /* 音が出せない環境(自動再生制限など)では黙って無視する */ }
+}
+// 画面から離れた(他アプリに切り替えた・ロックした等)ときもタイマーを止める。
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && stretchTimer) {
+    stopStretchTimer();
+    if (activeTab === "stretch") renderTabContent();
+  }
+});
+
+// ---- ② 今日のおすすめ3つ(v1.8) ----
+// 「最後にやった日から一番経っている項目」を優先し、一度もやっていない項目は最優先(Infinity)。
+// 同点(主に未実施どうし)は日付を種にした決定的なハッシュで並べ替える(Math.randomは使わない
+// ―― 使うとリロードのたびにおすすめが変わってしまい、「今日のおすすめ」の一貫性が無くなる)。
+function lastStretchDoneDate(itemId) {
+  let last = null;
+  Object.keys(stretchLog).forEach(d => {
+    if ((stretchLog[d] || []).includes(itemId) && (!last || d > last)) last = d;
+  });
+  return last;
+}
+function daysSinceDateStr(dateStr) {
+  const a = new Date(dateStr + "T00:00:00");
+  const b = new Date(localDateStr() + "T00:00:00");
+  return Math.round((b - a) / 86400000);
+}
+function hashStr_(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return h;
+}
+function todaysStretchPicks() {
+  const today = localDateStr();
+  const doneToday = new Set(stretchLog[today] || []);
+  const seed = today.split("-").join("");
+  const scored = STRETCH_ITEMS.filter(i => !doneToday.has(i.id)).map(item => {
+    const last = lastStretchDoneDate(item.id);
+    const days = last ? daysSinceDateStr(last) : Infinity;
+    return { item, days, hash: hashStr_(seed + item.id) };
+  });
+  scored.sort((a, b) => (b.days !== a.days) ? b.days - a.days : a.hash - b.hash);
+  return scored.slice(0, 3).map(s => s.item);
+}
+
+// ---- ③ 記録カレンダー(v1.8) ----
+// 表示中の月はstretchCalMonthという専用の状態で持ち、運動タブの履歴カレンダー(calMonth)
+// とは共有しない(片方をめくるともう片方も動いてしまう、という事故を防ぐため)。
+function stretchCalendarHtml() {
+  const year = stretchCalMonth.getFullYear(), month = stretchCalMonth.getMonth();
+  const startWeekday = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const todayStr = localDateStr();
+  let cells = "";
+  for (let i = 0; i < startWeekday; i++) cells += `<div class="cal-cell" style="visibility:hidden;"></div>`;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const doneIds = stretchLog[dateStr] || [];
+    const coreDone = CORE_STRETCH_IDS.filter(id => doneIds.includes(id)).length;
+    const ratio = coreDone / CORE_STRETCH_IDS.length;
+    let bg = "var(--paper)", fg = "";
+    if (ratio >= 1) { bg = "var(--teal)"; fg = "color:#fff;"; }
+    else if (ratio > 0.5) { bg = "var(--teal-soft)"; }
+    else if (ratio > 0) { bg = "var(--line)"; }
+    cells += `<div class="cal-cell ${dateStr === todayStr ? "today" : ""}" style="background:${bg};${fg}">
+      <span>${d}</span>${doneIds.length ? `<span style="font-size:9px;">${doneIds.length}</span>` : ""}
+    </div>`;
+  }
+  const weekHead = WEEKDAY.map(w => `<div style="text-align:center;font-size:10px;color:var(--ink-faint);">${w}</div>`).join("");
+  return `
+    <div class="between" style="margin-bottom:8px;">
+      <button data-action="stretch-cal-prev" style="background:none;border:none;font-size:16px;padding:4px 10px;">‹</button>
+      <span class="mono" style="font-weight:700;">${year}年${month + 1}月</span>
+      <button data-action="stretch-cal-next" style="background:none;border:none;font-size:16px;padding:4px 10px;">›</button>
+    </div>
+    <div class="cal-grid" style="margin-bottom:4px;">${weekHead}</div>
+    <div class="cal-grid">${cells}</div>
+    <p class="muted" style="font-size:10.5px;margin:10px 0 0;line-height:1.6;">色の濃さは、その日の基本セット(${CORE_STRETCH_IDS.length}項目)の達成率です。濃い緑=全部達成、薄い緑=半分以上、グレー=一部のみ。</p>`;
+}
+
+// ⏱ タイマーの開始/カウントダウン表示ボタン(チェックボックスのlabelの外に置く。
+// labelの中に別の操作可能要素を入れ子にするとHTML的に不正で、クリック時の挙動も
+// 怪しくなるため)。
+function stretchTimerButtonHtml(item) {
+  const isActive = stretchTimer && stretchTimer.itemId === item.id;
+  if (isActive) {
+    return `<button class="chip" data-action="stop-stretch-timer" data-id="${esc(item.id)}" style="flex:0 0 auto;white-space:nowrap;color:var(--coral);border-color:var(--coral);">⏱ <span data-stretch-timer-display="${esc(item.id)}">残り${stretchTimer.remaining}秒</span>・止める</button>`;
+  }
+  return `<button class="chip" data-action="start-stretch-timer" data-id="${esc(item.id)}" style="flex:0 0 auto;white-space:nowrap;">⏱ ${item.timerSec}秒で開始</button>`;
+}
+// チェック項目1件ぶんの行(チェックボックス + 名前 + やり方 + タイマー)。基本セット・
+// おすすめ・今日のおすすめ3つ、共通で使う。
 function stretchItemRow(item, doneIds) {
   const done = doneIds.has(item.id);
   return `
-    <label class="row" style="align-items:flex-start;gap:8px;margin-bottom:12px;cursor:pointer;">
-      <input type="checkbox" data-action="toggle-stretch" data-id="${esc(item.id)}" ${done ? "checked" : ""} style="width:18px;height:18px;flex:0 0 auto;margin-top:2px;">
-      <span style="display:block;">
-        <span style="display:block;font-size:12.5px;font-weight:600;${done ? "text-decoration:line-through;color:var(--ink-faint);" : ""}">${esc(item.label)}</span>
-        <span class="muted" style="display:block;font-size:11px;line-height:1.6;margin-top:2px;">${esc(item.how)}</span>
-      </span>
-    </label>`;
+    <div class="row" style="align-items:flex-start;gap:8px;margin-bottom:12px;">
+      <label style="display:flex;align-items:flex-start;gap:8px;flex:1;min-width:0;cursor:pointer;">
+        <input type="checkbox" data-action="toggle-stretch" data-id="${esc(item.id)}" ${done ? "checked" : ""} style="width:18px;height:18px;flex:0 0 auto;margin-top:2px;">
+        <span style="display:block;min-width:0;">
+          <span style="display:block;font-size:12.5px;font-weight:600;${done ? "text-decoration:line-through;color:var(--ink-faint);" : ""}">${esc(item.label)}</span>
+          <span class="muted" style="display:block;font-size:11px;line-height:1.6;margin-top:2px;">${esc(item.how)}</span>
+        </span>
+      </label>
+      ${stretchTimerButtonHtml(item)}
+    </div>`;
 }
 function stretchHtml() {
   const today = localDateStr();
@@ -4374,6 +4533,7 @@ function stretchHtml() {
   const coreTotal = coreItems.length;
   const allCoreDone = coreDoneCount === coreTotal;
   const streak = stretchStreak();
+  const picks = todaysStretchPicks();
 
   // おすすめ項目をcategory(上半身/下半身/体幹・全身)ごとにグルーピングして表示する。
   const categories = [];
@@ -4384,6 +4544,14 @@ function stretchHtml() {
   });
 
   return `
+    <div class="card">
+      <p class="section-title" style="margin:0 0 6px;">🎯 今日のおすすめ3つ</p>
+      ${picks.length === 0
+        ? `<p class="muted" style="font-size:12px;margin:0;line-height:1.6;">🎉 今日はもう全種目チェック済みです。お疲れさまでした!</p>`
+        : `<p class="muted" style="font-size:11px;margin:0 0 12px;line-height:1.6;">しばらくやっていない項目を中心に選びました。下の一覧と同じ項目なので、どちらからチェックしてもOKです。</p>
+           ${picks.map(item => stretchItemRow(item, doneIds)).join("")}`}
+    </div>
+
     <div class="card">
       <div class="between" style="margin-bottom:8px;">
         <p class="section-title" style="margin:0;">🧘 今日のストレッチ(基本セット)</p>
@@ -4401,6 +4569,11 @@ function stretchHtml() {
         <p class="muted" style="font-size:11px;font-weight:700;margin:0 0 8px;">${esc(cat.name)}</p>
         ${cat.items.map(item => stretchItemRow(item, doneIds)).join("")}
       `).join("")}
+    </div>
+
+    <div class="card">
+      <p class="section-title" style="margin:0 0 10px;">📅 記録カレンダー</p>
+      ${stretchCalendarHtml()}
     </div>
 `;
 }
@@ -4451,6 +4624,10 @@ document.getElementById("app").addEventListener("click", (e) => {
   }
   else if (action === "add-training") { handleAddTraining(); }
   else if (action === "toggle-stretch") { toggleStretchItem(today, t.dataset.id); }
+  else if (action === "start-stretch-timer") { startStretchTimer(t.dataset.id); }
+  else if (action === "stop-stretch-timer") { stopStretchTimer(); renderTabContent(); }
+  else if (action === "stretch-cal-prev") { stretchCalMonth = new Date(stretchCalMonth.getFullYear(), stretchCalMonth.getMonth()-1, 1); renderTabContent(); }
+  else if (action === "stretch-cal-next") { stretchCalMonth = new Date(stretchCalMonth.getFullYear(), stretchCalMonth.getMonth()+1, 1); renderTabContent(); }
   else if (action === "reset-entry-date") { entryDates[t.dataset.kind] = null; updateEntryDateNotice(t.dataset.kind); }
   else if (action === "view-list") { historyView = "list"; renderHistory(); }
   else if (action === "view-calendar") { historyView = "calendar"; renderHistory(); }
