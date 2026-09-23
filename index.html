@@ -1,4 +1,4 @@
-<!-- ヘルスログ バージョン: v1.6(設定タブ下部にも同じ番号が表示されます。更新のたびに
+<!-- ヘルスログ バージョン: v1.7(設定タブ下部にも同じ番号が表示されます。更新のたびに
      ここと下のAPP_VERSION、sw.jsのVERSION、README.mdの版数表記を揃えて上げてください) -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -168,7 +168,7 @@ const WORKER_URL = "https://health-log-ai.nishimasax4.workers.dev";
 const WORKER_TOKEN = "hS4%IpejF6842XppRBJz";
 function workerConfigured() { return !!WORKER_URL; }
 // アプリのバージョン番号。更新のたびに増やし、設定タブ下部に表示します。
-const APP_VERSION = "v1.6";
+const APP_VERSION = "v1.7";
 
 const STORAGE_KEY = "health-log-data";
 const PARTS = ["胸","背中","脚","肩","腕","腹筋"];
@@ -225,6 +225,61 @@ function houseworkMetFor_(name) {
   if (custom && custom.met) return custom.met;
   return HOUSEWORK_MET[name] || HOUSEWORK_MET["その他"];
 }
+// ストレッチタブの項目カタログ(v1.7)。デスクワークで座りっぱなしになりやすい部位と、
+// 筋トレ後の回復ケアを踏まえて選んだ固定7項目が core:true の「毎日の基本セット」。
+// それに加えて、道具なし・1人でできる項目を「おすすめ」として用意(core:false)。
+// 全項目に「やり方」の説明を付けている。どの項目も器具や補助者を必要としない。
+//
+// 【互換性メモ】連続記録(streak)の判定は「core:trueの項目が全部そろっているか」で
+// 見ており、STRETCH_ITEMS全体の件数は見ていない。そのため今後この配列に項目を増やしても、
+// 過去に付けた連続記録が急に途切れて見えることはない。
+const STRETCH_ITEMS = [
+  // --- 毎日の基本セット(streakの対象) ---
+  { id: "chest", core: true, category: "上半身",
+    label: "胸を開くストレッチ(肩甲骨寄せ)",
+    how: "両手を体の後ろで組み、肩甲骨を寄せながら腕をゆっくり持ち上げる。胸の前面が伸びる感覚を確認しながら20〜30秒キープ。" },
+  { id: "neckshoulder", core: true, category: "上半身",
+    label: "首・肩回し",
+    how: "肩をすくめるように持ち上げてから、大きく後ろに回す。続けて首をゆっくり左右・前後に倒し、それぞれ10〜15秒かけて伸ばす。" },
+  { id: "hipflexor", core: true, category: "下半身",
+    label: "股関節屈筋のストレッチ(前後開脚)",
+    how: "片足を大きく前に踏み出してランジの姿勢を取り、後ろ足の付け根を床に近づけるように腰を落とす。後ろ足側の股関節前面が伸びる感覚を確認しながら20〜30秒。左右入れ替える。" },
+  { id: "quad", core: true, category: "下半身",
+    label: "太もも前面(大腿四頭筋)",
+    how: "壁や椅子に手を添えて片足立ちになり、反対側の足首をつかんでかかとをお尻に近づける。太もも前面が伸びる感覚を確認しながら20〜30秒。左右入れ替える。" },
+  { id: "hamstring", core: true, category: "下半身",
+    label: "ハムストリングス",
+    how: "椅子に浅く座るか床に座り、片足を前に伸ばして膝を軽く伸ばしたまま上体を前に倒す。太もも裏が伸びる感覚を確認しながら20〜30秒。左右入れ替える。" },
+  { id: "calf", core: true, category: "下半身",
+    label: "ふくらはぎ",
+    how: "壁に手をつき、片足を大きく後ろに引いてかかとを床につけたまま体重を前にかける。ふくらはぎが伸びる感覚を確認しながら20〜30秒。左右入れ替える。" },
+  { id: "backhip", core: true, category: "体幹・全身",
+    label: "腰・背中(膝抱えストレッチ)",
+    how: "仰向けに寝て両膝を胸に抱え込み、腰・お尻が伸びる感覚を感じながら20〜30秒キープ。呼吸を止めずゆっくりと。" },
+  // --- おすすめ(道具なし・1人でできる。streakには含めない) ---
+  { id: "lats", core: false, category: "上半身",
+    label: "広背筋・体側のストレッチ",
+    how: "両手を頭上で組んでバンザイの姿勢を取り、上体をゆっくり真横に倒す。体側から脇腹にかけて伸びる感覚を確認しながら15〜20秒。左右入れ替える。" },
+  { id: "triceps", core: false, category: "上半身",
+    label: "二の腕(上腕三頭筋)のストレッチ",
+    how: "片腕を頭の後ろに上げて肘を曲げ、反対の手で肘を軽く押さえて後方に引く。二の腕の裏側が伸びる感覚を確認しながら15〜20秒。左右入れ替える。" },
+  { id: "wrist", core: false, category: "上半身",
+    label: "手首・前腕のストレッチ",
+    how: "片腕を前に伸ばし、手のひらを上に向けて反対の手で指先を軽く手前に引く。次に手のひらを下に向けて同様に。それぞれ10〜15秒。左右入れ替える。" },
+  { id: "innerthigh", core: false, category: "下半身",
+    label: "内もものストレッチ",
+    how: "床に座って両足の裏を合わせ、膝を外側に開く。かかとを体に近づけながら、両膝をゆっくり床に近づけるように上体を前に倒す。内ももが伸びる感覚を確認しながら20〜30秒。" },
+  { id: "ankle", core: false, category: "下半身",
+    label: "足首回し・アキレス腱のストレッチ",
+    how: "椅子に座るか壁に手をついて、片足のつま先を床につけたまま足首を大きく10回ほど回す。続けて壁に手をついて片足を後ろに引き、アキレス腱を伸ばして15秒キープ。左右入れ替える。" },
+  { id: "spinaltwist", core: false, category: "体幹・全身",
+    label: "座ったまま体幹ひねり",
+    how: "椅子に浅く座り、背筋を伸ばしたまま上体だけをゆっくり片方にひねる。椅子の背もたれや座面に軽く手を添えてひねりを深め、15〜20秒キープして反対側も。" },
+  { id: "catcow", core: false, category: "体幹・全身",
+    label: "背骨のストレッチ(キャット&カウ)",
+    how: "四つばいの姿勢になり、息を吸いながら背中を反らせ(カウ)、息を吐きながら背中を丸める(キャット)。ゆっくり5〜8回繰り返す。" },
+];
+const CORE_STRETCH_IDS = STRETCH_ITEMS.filter(i => i.core).map(i => i.id);
 const STRENGTH_KCAL_PER_SET = 10; // 筋トレ1セットあたりの消費カロリー概算(目安)
 const REP_QUICK_OPTIONS = [10,20,30,40,50]; // 回数のワンタップ候補(10回刻み・50回まで)。これ以外の回数は入力欄に直接入力できます
 const MINUTE_QUICK_OPTIONS = [15,30,45,60]; // 有酸素の時間のワンタップ候補(分)。これ以外の時間は入力欄に直接入力できます
@@ -324,8 +379,9 @@ let mealMaster = [];     // {id, name, calories, protein, fat, carb} - user-edit
 let lastStrengthByExercise = {}; // "種目名"(または"(部位)") -> {reps, weight} の直近の入力値。次回そのままの値を提案する
 let lastCardioMinutes = {}; // 有酸素の種目名 -> 直近の分数
 let lastHouseworkMinutes = {}; // 家事の内容 -> 直近の分数
+let stretchLog = {}; // "YYYY-MM-DD" -> [itemId, ...] その日にチェック済みのストレッチ項目ID一覧(v1.7)
 
-let activeTab = "today"; // today | meals | weight | training | settings
+let activeTab = "today"; // today | meals | weight | training | stretch | settings
 let trainingSubTab = "strength"; // strength | cardio | housework
 let selectedPart = "胸";
 let selectedCardio = "ランニング";
@@ -1035,6 +1091,7 @@ function loadState() {
       lastStrengthByExercise = data.lastStrengthByExercise || {};
       lastCardioMinutes = data.lastCardioMinutes || {};
       lastHouseworkMinutes = data.lastHouseworkMinutes || {};
+      stretchLog = data.stretchLog || {};
     }
   } catch (e) {
     // 保存内容が壊れていた場合、ここで黙って初期状態に戻すと「まっさらな新規状態」として
@@ -1056,7 +1113,7 @@ function seedExerciseMasterIfEmpty() {
 }
 function saveState() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ entries, weightEntries, mealEntries, goals, profile, moodByDate, exerciseMaster, mealMaster, cardioMaster, houseworkMaster, lastStrengthByExercise, lastCardioMinutes, lastHouseworkMinutes }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ entries, weightEntries, mealEntries, goals, profile, moodByDate, exerciseMaster, mealMaster, cardioMaster, houseworkMaster, lastStrengthByExercise, lastCardioMinutes, lastHouseworkMinutes, stretchLog }));
     // 直前まで保存できていなかった場合は、復旧したことを警告表示にも反映する。
     if (storageWriteFailed) { storageWriteFailed = false; renderDataWarning(); }
   } catch (e) {
@@ -2164,6 +2221,7 @@ function exportJson() {
       app: "health-log", version: APP_VERSION, exportedAt: new Date().toISOString(),
       entries, weightEntries, mealEntries, goals, profile, moodByDate,
       exerciseMaster, mealMaster, cardioMaster, houseworkMaster, lastStrengthByExercise, lastCardioMinutes, lastHouseworkMinutes,
+      stretchLog,
     };
     const blob = new Blob([JSON.stringify(dump, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -2233,6 +2291,20 @@ function sanitizeImported_(data) {
     Object.keys(data.moodByDate).forEach(k => { data.moodByDate[k] = safeStr_(data.moodByDate[k]); });
   } else {
     data.moodByDate = {};
+  }
+  // stretchLog: "日付" -> [ストレッチ項目ID, ...]。既知の項目IDだけを残し、
+  // 壊れた/細工されたデータが入っていても表示や連続記録の判定に影響しないようにする。
+  const knownStretchIds = new Set(STRETCH_ITEMS.map(i => i.id));
+  if (data.stretchLog && typeof data.stretchLog === "object" && !Array.isArray(data.stretchLog)) {
+    const cleaned = {};
+    Object.keys(data.stretchLog).forEach(k => {
+      const list = Array.isArray(data.stretchLog[k]) ? data.stretchLog[k] : [];
+      const ids = Array.from(new Set(list.map(safeStr_).filter(id => knownStretchIds.has(id))));
+      if (ids.length > 0) cleaned[safeStr_(k)] = ids;
+    });
+    data.stretchLog = cleaned;
+  } else {
+    data.stretchLog = {};
   }
   return data;
 }
@@ -2677,6 +2749,7 @@ function renderApp() {
       <button class="tab-item" data-tab="meals"><span class="ic">🍽️</span>食事</button>
       <button class="tab-item" data-tab="weight"><span class="ic">⚖️</span>からだ</button>
       <button class="tab-item" data-tab="training"><span class="ic">🏋️</span>運動</button>
+      <button class="tab-item" data-tab="stretch"><span class="ic">🧘</span>ストレッチ</button>
       <button class="tab-item" data-tab="settings"><span class="ic">⚙️</span>設定</button>
     </div>`;
   renderDataWarning();
@@ -2692,6 +2765,7 @@ function renderTabContent() {
   else if (activeTab === "meals") el.innerHTML = mealsHtml();
   else if (activeTab === "weight") el.innerHTML = weightHtml();
   else if (activeTab === "training") el.innerHTML = trainingHtml();
+  else if (activeTab === "stretch") el.innerHTML = stretchHtml();
   else if (activeTab === "settings") el.innerHTML = settingsHtml();
   bindTrainingFormWidgets();
   bindSettingsWidgets();
@@ -4250,6 +4324,87 @@ function yesterdayMealTypesAvailable() {
   return MEAL_TYPES.filter(t => mealEntries.some(m => m.date === y && m.mealType === t));
 }
 
+// ============ ストレッチタブ(v1.7) ============
+// STRETCH_ITEMSを日付ごとにチェックできるようにする。運動の記録(entries)とは
+// 別に、その日チェック済みの項目IDだけをstretchLogに保存する。
+function toggleStretchItem(date, itemId) {
+  const done = new Set(stretchLog[date] || []);
+  if (done.has(itemId)) done.delete(itemId); else done.add(itemId);
+  stretchLog[date] = Array.from(done);
+  saveState();
+  renderTabContent();
+}
+// 「基本セット(core:trueの項目)が全部そろっている日」が今日から何日連続で続いているか。
+// 今日がまだ未完了でも、昨日までの連続日数は途切れさせない(その日の終わりまでにチェックする
+// 猶予を持たせる)。おすすめ項目(core:false)は連続記録の判定には含めない。
+function stretchStreak() {
+  let streak = 0;
+  let d = new Date();
+  const todayStr = localDateStr();
+  const isCoreDone = (doneIds) => CORE_STRETCH_IDS.every(id => doneIds.includes(id));
+  const todayDone = isCoreDone(stretchLog[todayStr] || []);
+  if (!todayDone) d.setDate(d.getDate() - 1); // 今日未完了なら昨日から数える
+  while (true) {
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    const doneIds = stretchLog[key] || [];
+    if (!isCoreDone(doneIds)) break;
+    streak++;
+    d.setDate(d.getDate() - 1);
+  }
+  return streak;
+}
+// チェック項目1件ぶんの行(チェックボックス + 名前 + やり方)。基本セット・おすすめ共通。
+function stretchItemRow(item, doneIds) {
+  const done = doneIds.has(item.id);
+  return `
+    <label class="row" style="align-items:flex-start;gap:8px;margin-bottom:12px;cursor:pointer;">
+      <input type="checkbox" data-action="toggle-stretch" data-id="${esc(item.id)}" ${done ? "checked" : ""} style="width:18px;height:18px;flex:0 0 auto;margin-top:2px;">
+      <span style="display:block;">
+        <span style="display:block;font-size:12.5px;font-weight:600;${done ? "text-decoration:line-through;color:var(--ink-faint);" : ""}">${esc(item.label)}</span>
+        <span class="muted" style="display:block;font-size:11px;line-height:1.6;margin-top:2px;">${esc(item.how)}</span>
+      </span>
+    </label>`;
+}
+function stretchHtml() {
+  const today = localDateStr();
+  const doneIds = new Set(stretchLog[today] || []);
+  const coreItems = STRETCH_ITEMS.filter(i => i.core);
+  const extraItems = STRETCH_ITEMS.filter(i => !i.core);
+  const coreDoneCount = coreItems.filter(i => doneIds.has(i.id)).length;
+  const coreTotal = coreItems.length;
+  const allCoreDone = coreDoneCount === coreTotal;
+  const streak = stretchStreak();
+
+  // おすすめ項目をcategory(上半身/下半身/体幹・全身)ごとにグルーピングして表示する。
+  const categories = [];
+  extraItems.forEach(item => {
+    let cat = categories.find(c => c.name === item.category);
+    if (!cat) { cat = { name: item.category, items: [] }; categories.push(cat); }
+    cat.items.push(item);
+  });
+
+  return `
+    <div class="card">
+      <div class="between" style="margin-bottom:8px;">
+        <p class="section-title" style="margin:0;">🧘 今日のストレッチ(基本セット)</p>
+        <span class="muted" style="font-size:11.5px;">${coreDoneCount}/${coreTotal}${allCoreDone ? " ✅" : ""}</span>
+      </div>
+      ${streak > 0 ? `<p class="muted" style="font-size:11px;margin:0 0 8px;">🔥 基本セット全項目達成 ${streak}日連続</p>` : ""}
+      <p class="muted" style="font-size:11px;margin:0 0 12px;line-height:1.6;">デスクワークで座りっぱなしになりやすい部位と、筋トレ後の回復ケアを踏まえた毎日の基本セットです。全部チェックすると連続記録がカウントされます。</p>
+      ${coreItems.map(item => stretchItemRow(item, doneIds)).join("")}
+    </div>
+
+    <div class="card">
+      <p class="section-title" style="margin:0 0 6px;">✨ 他にもやってみる(1人でできるおすすめ)</p>
+      <p class="muted" style="font-size:11px;margin:0 0 14px;line-height:1.6;">道具や補助者なしで1人でできるストレッチです。基本セットに慣れてきたら、気になる部位を選んで取り入れてみましょう。チェックすると記録は残りますが、連続記録(streak)には影響しません。</p>
+      ${categories.map(cat => `
+        <p class="muted" style="font-size:11px;font-weight:700;margin:0 0 8px;">${esc(cat.name)}</p>
+        ${cat.items.map(item => stretchItemRow(item, doneIds)).join("")}
+      `).join("")}
+    </div>
+`;
+}
+
 // ============ EVENTS (bound once; #app content is replaced via innerHTML, so delegation is required) ============
 document.getElementById("app").addEventListener("click", (e) => {
   const tabBtn = e.target.closest("[data-tab]");
@@ -4295,6 +4450,7 @@ document.getElementById("app").addEventListener("click", (e) => {
     renderTrainingFormOptions();
   }
   else if (action === "add-training") { handleAddTraining(); }
+  else if (action === "toggle-stretch") { toggleStretchItem(today, t.dataset.id); }
   else if (action === "reset-entry-date") { entryDates[t.dataset.kind] = null; updateEntryDateNotice(t.dataset.kind); }
   else if (action === "view-list") { historyView = "list"; renderHistory(); }
   else if (action === "view-calendar") { historyView = "calendar"; renderHistory(); }
@@ -4567,7 +4723,7 @@ document.getElementById("app").addEventListener("click", (e) => {
     masterCardioIntensityKey = DEFAULT_ACTIVITY_INTENSITY; masterHouseworkIntensityKey = DEFAULT_ACTIVITY_INTENSITY;
     masterCardioMet = ACTIVITY_INTENSITY_LEVELS.find(l => l.key === DEFAULT_ACTIVITY_INTENSITY).met;
     masterHouseworkMet = ACTIVITY_INTENSITY_LEVELS.find(l => l.key === DEFAULT_ACTIVITY_INTENSITY).met;
-    lastStrengthByExercise = {}; lastCardioMinutes = {}; lastHouseworkMinutes = {}; mealDetailOpen = false;
+    lastStrengthByExercise = {}; lastCardioMinutes = {}; lastHouseworkMinutes = {}; stretchLog = {}; mealDetailOpen = false;
     entryDates = { meal: null, weight: null, training: null };
     nutritionCache = {}; saveNutritionCache();
     activityMetCache = {}; saveActivityMetCache();
