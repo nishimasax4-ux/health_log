@@ -1,4 +1,4 @@
-<!-- ヘルスログ バージョン: v1.9(設定タブ下部にも同じ番号が表示されます。更新のたびに
+<!-- ヘルスログ バージョン: v1.10(設定タブ下部にも同じ番号が表示されます。更新のたびに
      ここと下のAPP_VERSION、sw.jsのVERSION、README.mdの版数表記を揃えて上げてください) -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -168,7 +168,7 @@ const WORKER_URL = "https://health-log-ai.nishimasax4.workers.dev";
 const WORKER_TOKEN = "hS4%IpejF6842XppRBJz";
 function workerConfigured() { return !!WORKER_URL; }
 // アプリのバージョン番号。更新のたびに増やし、設定タブ下部に表示します。
-const APP_VERSION = "v1.9";
+const APP_VERSION = "v1.10";
 
 const STORAGE_KEY = "health-log-data";
 const PARTS = ["胸","背中","脚","肩","腕","腹筋"];
@@ -242,6 +242,13 @@ function walkStatsFromSteps_(steps, heightCm) {
   const minutes = (distanceKm / STEPS_WALK_SPEED_KMH) * 60;
   return { distanceKm, minutes, strideM };
 }
+// ---- ランニング・ウォーキングの距離一覧表示(v1.10) ----
+// 「歩数で入力」した記録は実測に近いdistanceKmを持っているが、⏱時間で入力した記録には
+// 距離が無い。そこで、内蔵のMET値が前提とするペースから、時間(分)を距離に逆算して
+// 履歴に「約○km」として表示する(実測ではなく概算であることが伝わるよう「約」を付ける)。
+// ランニングは走る人によってペースの差が大きいため、あくまで目安。
+// ウォーキングは歩数変換と同じSTEPS_WALK_SPEED_KMH(4.8km/h)を使い、値の矛盾を避けている。
+const ASSUMED_CARDIO_SPEED_KMH = { "ランニング": 8.0, "ウォーキング": STEPS_WALK_SPEED_KMH };
 function houseworkMetFor_(name) {
   const custom = houseworkMaster.find(c => c.name === name);
   if (custom && custom.met) return custom.met;
@@ -3550,9 +3557,23 @@ function trainingEntryRowHtml(e) {
   const isHousework = e.type === "housework";
   const latestWeight = [...weightEntries].sort((a,b) => a.date < b.date ? 1 : -1)[0];
   const burn = estimateEntryBurn_(e, latestWeight ? latestWeight.weight : null);
+  // 距離の表示(v1.10): 歩数入力の記録は実測に近い距離(steps由来のdistanceKm)をそのまま、
+  // それ以外のランニング・ウォーキングの記録は、内蔵MET値の想定ペースから概算した距離を
+  // 「約○km」として添える(実測と紛れないよう「約」で明示)。
+  let distanceHtml = "";
+  if (!isStrength && !isHousework) {
+    if (e.steps) {
+      distanceHtml = ` <span class="mono muted">(${Number(e.steps).toLocaleString()}歩・${Number(e.distanceKm||0).toFixed(1)}km)</span>`;
+    } else {
+      const speed = ASSUMED_CARDIO_SPEED_KMH[e.exercise];
+      if (speed && e.minutes) {
+        distanceHtml = ` <span class="mono muted">(約${(speed * e.minutes / 60).toFixed(1)}km)</span>`;
+      }
+    }
+  }
   const detail = isStrength
     ? `<span style="font-weight:600;">[${esc(e.part)}]</span>${e.exercise ? " "+esc(e.exercise) : ""} <span class="mono" style="color:var(--sand);">${e.weight}kg × ${e.reps}</span>`
-    : `${esc(e.exercise)} <span class="mono" style="color:var(--sand);">${e.minutes}分</span>${e.steps ? ` <span class="mono muted">(${Number(e.steps).toLocaleString()}歩・${Number(e.distanceKm||0).toFixed(1)}km)</span>` : ""}`;
+    : `${esc(e.exercise)} <span class="mono" style="color:var(--sand);">${e.minutes}分</span>${distanceHtml}`;
   return `<div class="entry-row">
     <div class="badge" style="background:${isStrength ? "var(--coral-soft)" : isHousework ? "var(--sand-soft)" : "var(--slate-soft)"};">${isStrength ? "🏋️" : isHousework ? "🧹" : "💨"}</div>
     <div style="flex:1;">${detail}${burn ? ` <span class="mono muted">(約${burn}kcal)</span>` : ""}</div>
