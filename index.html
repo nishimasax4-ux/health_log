@@ -1,4 +1,4 @@
-<!-- ヘルスログ バージョン: v1.14(設定タブ下部にも同じ番号が表示されます。更新のたびに
+<!-- ヘルスログ バージョン: v1.15(設定タブ下部にも同じ番号が表示されます。更新のたびに
      ここと下のAPP_VERSION、sw.jsのVERSION、README.mdの版数表記を揃えて上げてください) -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -168,7 +168,7 @@ const WORKER_URL = "https://health-log-ai.nishimasax4.workers.dev";
 const WORKER_TOKEN = "hS4%IpejF6842XppRBJz";
 function workerConfigured() { return !!WORKER_URL; }
 // アプリのバージョン番号。更新のたびに増やし、設定タブ下部に表示します。
-const APP_VERSION = "v1.14";
+const APP_VERSION = "v1.15";
 
 const STORAGE_KEY = "health-log-data";
 const PARTS = ["胸","背中","脚","肩","腕","腹筋"];
@@ -3791,7 +3791,16 @@ function dayDashboardKpiHtml_(dateStr, dayEntries, dayWeight, dayMeals, dayStret
         <div class="kpi-d ${coreDone === coreTotal ? "good" : "neutral"}">計${dayStretchIds.length}項目</div>
       </div>`;
 
-  return `<div class="kpi-grid" style="margin:10px 0 0;">${intakeTile}${burnTile}${weightTile}${stretchTile}</div>`;
+  // 「今日」「食事」タブと同じ説明文(exerciseTargetNoteText_)をここにも出す(v1.14の修正)。
+  // 運動した日の消費は、まず「食事だけでは目標ペースに届かない不足分」の穴埋めに使われ、
+  // それを超えたぶんだけ摂取カロリーの目標に上乗せされる(getEffectiveCalorieTargetの仕様)。
+  // この説明が無いと、運動を記録したのに摂取カロリーの目標が変わらない(=不足分の穴埋めに
+  // 使われただけで上乗せが無い)ケースで、「運動分がカロリーの基準に反映されていない」ように
+  // 見えてしまうため、他のタブと同様に必ず理由を添える。
+  const exerciseNote = effTarget && effTarget.exerciseBurn > 0
+    ? `<p class="muted" style="font-size:10.5px;margin:6px 0 0;line-height:1.6;">${exerciseTargetNoteText_(effTarget)}</p>`
+    : "";
+  return `<div class="kpi-grid" style="margin:10px 0 0;">${intakeTile}${burnTile}${weightTile}${stretchTile}</div>${exerciseNote}`;
 }
 function dayDetailHtml(dateStr) {
   const dd = new Date(dateStr + "T00:00:00");
