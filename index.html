@@ -1,4 +1,4 @@
-<!-- ヘルスログ バージョン: v1.13(設定タブ下部にも同じ番号が表示されます。更新のたびに
+<!-- ヘルスログ バージョン: v1.14(設定タブ下部にも同じ番号が表示されます。更新のたびに
      ここと下のAPP_VERSION、sw.jsのVERSION、README.mdの版数表記を揃えて上げてください) -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -168,7 +168,7 @@ const WORKER_URL = "https://health-log-ai.nishimasax4.workers.dev";
 const WORKER_TOKEN = "hS4%IpejF6842XppRBJz";
 function workerConfigured() { return !!WORKER_URL; }
 // アプリのバージョン番号。更新のたびに増やし、設定タブ下部に表示します。
-const APP_VERSION = "v1.13";
+const APP_VERSION = "v1.14";
 
 const STORAGE_KEY = "health-log-data";
 const PARTS = ["胸","背中","脚","肩","腕","腹筋"];
@@ -3747,6 +3747,52 @@ function calendarGridHtml() {
     <div class="cal-grid" style="margin-bottom:4px;">${weekHead}</div>
     <div class="cal-grid">${cells}</div>`;
 }
+// 選択した日のKPIタイル4枚(v1.14)。「今日」タブの冒頭パネルと同じ考え方・同じ計算関数
+// (estimateExerciseBurnBreakdownForDate・getEffectiveCalorieTarget)を使い回しているので、
+// ここで見える数字と他のタブの数字が食い違うことはない。
+function dayDashboardKpiHtml_(dateStr, dayEntries, dayWeight, dayMeals, dayStretchIds) {
+  const latestWeight = [...weightEntries].sort((a,b) => a.date < b.date ? 1 : -1)[0];
+  const weightKg = latestWeight ? latestWeight.weight : 60; // 体重未記録でも目安は出せるように(computeBurnHistoryと同じ考え方)
+  const burnBreakdown = estimateExerciseBurnBreakdownForDate(dateStr, weightKg);
+  const effTarget = getEffectiveCalorieTarget(dateStr);
+  const dayCal = dayMeals.reduce((s,m) => s + (m.calories||0), 0);
+
+  const intakeTile = dayMeals.length === 0
+    ? `<div class="kpi"><div class="kpi-l">摂取カロリー</div><div class="kpi-v">−</div><div class="kpi-d neutral">記録なし</div></div>`
+    : `<div class="kpi">
+        <div class="kpi-l">摂取カロリー</div>
+        <div class="kpi-v">${dayCal}<span>${effTarget ? `/${effTarget.effectiveTarget}` : ""}kcal</span></div>
+        <div class="kpi-d ${effTarget ? (dayCal <= effTarget.effectiveTarget ? "good" : "bad") : "neutral"}">${effTarget ? (dayCal <= effTarget.effectiveTarget ? `残り${effTarget.effectiveTarget - dayCal}kcal` : `超過${dayCal - effTarget.effectiveTarget}kcal`) : "目標未設定"}</div>
+      </div>`;
+
+  const burnTile = burnBreakdown.total === 0
+    ? `<div class="kpi"><div class="kpi-l">消費カロリー(運動)</div><div class="kpi-v">−</div><div class="kpi-d neutral">記録なし</div></div>`
+    : `<div class="kpi">
+        <div class="kpi-l">消費カロリー(運動)</div>
+        <div class="kpi-v">${burnBreakdown.total}<span>kcal</span></div>
+        <div class="kpi-d neutral">🏋️${burnBreakdown.strength} + 💨${burnBreakdown.cardio}</div>
+      </div>`;
+
+  const weightTile = dayWeight
+    ? `<div class="kpi">
+        <div class="kpi-l">体重</div>
+        <div class="kpi-v">${dayWeight.weight}<span>kg</span></div>
+        <div class="kpi-d neutral">${dayWeight.bodyFat != null ? `体脂肪${dayWeight.bodyFat}%` : ""}${dayWeight.bodyFat != null && dayWeight.waist != null ? "・" : ""}${dayWeight.waist != null ? `腹囲${dayWeight.waist}cm` : ""}${dayWeight.bodyFat == null && dayWeight.waist == null ? "任意項目は未記録" : ""}</div>
+      </div>`
+    : `<div class="kpi"><div class="kpi-l">体重</div><div class="kpi-v">−</div><div class="kpi-d neutral">記録なし</div></div>`;
+
+  const coreTotal = CORE_STRETCH_IDS.length;
+  const coreDone = CORE_STRETCH_IDS.filter(id => dayStretchIds.includes(id)).length;
+  const stretchTile = dayStretchIds.length === 0
+    ? `<div class="kpi"><div class="kpi-l">ストレッチ</div><div class="kpi-v">−</div><div class="kpi-d neutral">記録なし</div></div>`
+    : `<div class="kpi">
+        <div class="kpi-l">ストレッチ</div>
+        <div class="kpi-v">${coreDone}<span>/${coreTotal}(基本セット)</span></div>
+        <div class="kpi-d ${coreDone === coreTotal ? "good" : "neutral"}">計${dayStretchIds.length}項目</div>
+      </div>`;
+
+  return `<div class="kpi-grid" style="margin:10px 0 0;">${intakeTile}${burnTile}${weightTile}${stretchTile}</div>`;
+}
 function dayDetailHtml(dateStr) {
   const dd = new Date(dateStr + "T00:00:00");
   const dayEntries = entries.filter(e => e.date === dateStr);
@@ -3757,6 +3803,13 @@ function dayDetailHtml(dateStr) {
   if (dayEntries.length === 0 && !dayWeight && dayMeals.length === 0 && dayStretchIds.length === 0) {
     return header + '<p class="muted" style="font-size:12px;">この日の記録はありません。</p>';
   }
+  // ダッシュボード(v1.14): KPIタイル4枚 + (食事の記録があれば)P/F/Cの達成度メーター。
+  // 「今日」「食事」タブと同じ見た目・同じ計算式を使い、選んだ日の状況をひと目で
+  // 把握できるようにしている。この下に続く1件ずつの明細(編集・削除ボタン付き)は
+  // これまで通り残しているので、詳細確認や修正はそのまま行える。
+  const kpiHtml = dayDashboardKpiHtml_(dateStr, dayEntries, dayWeight, dayMeals, dayStretchIds);
+  const pfcHtml = dayPfcHtml_(dateStr);
+  const dashboard = kpiHtml + (pfcHtml ? `<div style="margin-top:10px;">${pfcHtml}</div>` : "");
   const trainingRows = dayEntries.map(trainingEntryRowHtml).join("");
   const weightRow = dayWeight ? `<div class="entry-row">
       <div class="badge" style="background:var(--sand-soft);">⚖️</div>
@@ -3775,7 +3828,7 @@ function dayDetailHtml(dateStr) {
         <div class="muted" style="font-size:11px;margin-top:2px;line-height:1.6;">${dayStretchIds.map(id => { const item = STRETCH_ITEMS.find(x => x.id === id); return esc(item ? item.label : id); }).join("・")}</div>
       </div>
     </div>` : "";
-  return header + trainingRows + weightRow + mealRows + stretchRow;
+  return header + dashboard + `<div style="margin-top:12px;">${trainingRows}${weightRow}${mealRows}${stretchRow}</div>`;
 }
 // ============ カレンダータブ(v1.13・要望⑧) ============
 // 「今日」「食事」「からだ」「運動」「ストレッチ」の各タブは直近7日間だけに絞って
@@ -3786,7 +3839,7 @@ function calendarTabHtml() {
   return `
     <div class="card">
       <p class="section-title" style="margin:0 0 4px;">📅 カレンダー(全記録)</p>
-      <p class="muted" style="font-size:10.5px;margin:0 0 8px;line-height:1.6;">印: 🔴運動 / 🟡体重 / 🔵食事 / 🟣ストレッチ。日付をタップすると、その日にあった記録がすべて下に表示されます。各タブの履歴は直近7日間だけの表示にしているので、それより前の記録はここから確認できます。</p>
+      <p class="muted" style="font-size:10.5px;margin:0 0 8px;line-height:1.6;">印: 🔴運動 / 🟡体重 / 🔵食事 / 🟣ストレッチ。日付をタップすると、その日のダッシュボード(摂取・消費カロリー・体重・ストレッチのKPIと、記録の明細)が下に表示されます。各タブの履歴は直近7日間だけの表示にしているので、それより前の記録はここから確認できます。</p>
       ${calendarGridHtml()}
       <div id="calendar-day-detail">${dayDetailHtml(selectedCalDate)}</div>
     </div>`;
