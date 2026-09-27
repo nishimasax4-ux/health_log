@@ -1,4 +1,4 @@
-<!-- ヘルスログ バージョン: v1.16(設定タブ下部にも同じ番号が表示されます。更新のたびに
+<!-- ヘルスログ バージョン: v1.18(設定タブ下部にも同じ番号が表示されます。更新のたびに
      ここと下のAPP_VERSION、sw.jsのVERSION、README.mdの版数表記を揃えて上げてください) -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -168,7 +168,7 @@ const WORKER_URL = "https://health-log-ai.nishimasax4.workers.dev";
 const WORKER_TOKEN = "hS4%IpejF6842XppRBJz";
 function workerConfigured() { return !!WORKER_URL; }
 // アプリのバージョン番号。更新のたびに増やし、設定タブ下部に表示します。
-const APP_VERSION = "v1.16";
+const APP_VERSION = "v1.18";
 
 const STORAGE_KEY = "health-log-data";
 const PARTS = ["胸","背中","脚","肩","腕","腹筋"];
@@ -451,6 +451,7 @@ let dataOpError = false;
 let confirmRestore = false; // 上書き確認待ちの復元(JSONインポート)か
 let mealDetailOpen = false; // 食事記録フォームの「詳細(栄養素)」が開いているか
 let selectedPostVariation = 0; // 「からだ」タブのSNSポスト作成で選んでいる文面の種類(0〜2。v1.16)
+let selectedPostDateMode = "today"; // "today" | "yesterday" — 同ポスト作成で選んでいる基準日(v1.17)
 // 食事・体重・運動の各フォームで選んでいる日付。過去の分をまとめて入力するとき、
 // 1件記録するたびに今日へ戻ってしまうと、2件目以降が気づかないうちに今日の記録に
 // なってしまうため、選んだ日付を明示的に覚えておく(null = 今日)。
@@ -824,6 +825,25 @@ const AI_PROMPTS = {
     '- 単位の表示(kg / %)があれば、それを優先して判断する\n' +
     '- BMI・筋肉量・内臓脂肪レベル・基礎代謝など、体重と体脂肪率以外の数値は無視する\n' +
     '- 表示が読み取れない、体重計が写っていない、数字がぼやけている場合は、その項目をnullにする\n' +
+    '- 推測で埋めないこと。はっきり読み取れた数値だけを返す',
+
+  // ジムの有酸素マシン(エアロバイク・ランニングマシン・クロストレーナー等)の
+  // コンソール表示を読み取る(v1.18)。体重計の表示読み取りと同じ考え方。
+  // カロリー表示も読み取るが、これは参考値として見せるだけで、記録にはアプリ内の
+  // MET計算(他の運動・体重計と同じ式)を使う。マシンのカロリー表示は機種によって
+  // 過大評価されがちで、他の運動種目と計算根拠がずれると、収支グラフの数字が
+  // 種目によって食い違って見えてしまうため。
+  cardioMachine: () =>
+    'これはジムの有酸素運動マシン(エアロバイク・ランニングマシン・クロストレーナーなど)の\n' +
+    'コンソール表示部分の写真です。表示されている数値を読み取ってください。\n\n' +
+    'JSONのみを返してください。前置き・後書き・コードフェンスは不要です。\n' +
+    '形式: {"minutes": 数値またはnull, "distanceKm": 数値またはnull, "caloriesShown": 数値またはnull}\n\n' +
+    '### 読み取りのきまり\n' +
+    '- minutes は経過時間の合計(分)。「TIME」「タイマー」などの欄の値が「49:09」のような分:秒形式なら、分 + 秒/60 で計算する(例: 49:09 → 49.15)\n' +
+    '- distanceKm は「DISTANCE」「距離」の欄の値(km)\n' +
+    '- caloriesShown は「CALORIES」「カロリー」の欄の値(kcal)\n' +
+    '- 複数の項目を順番に切り替えて表示する大きな数字(「SCAN」表示など)は誤読しやすいため、はっきりラベルの付いた表示欄の数値を優先する\n' +
+    '- 数値が0や空欄、読み取れない場合はnullにする\n' +
     '- 推測で埋めないこと。はっきり読み取れた数値だけを返す',
 
   // 有酸素・家事マスタで、内蔵の表に無い活動の運動強度(MET)を概算する(v48)。
@@ -1471,6 +1491,85 @@ function scalePhotoRowHtml() {
     <input type="file" id="scale-photo-input" accept="image/*" class="hidden">
     <button type="button" class="chip active-b" id="scale-photo-btn" data-action="take-scale-photo" style="margin-bottom:4px;">📷 体重計の表示を撮る</button>
     <p id="scale-photo-status" class="muted" style="font-size:10.5px;margin:0 0 8px;line-height:1.6;"></p>`;
+}
+
+// ============ 有酸素マシンの表示を撮って時間を読み取る(v1.18) ============
+// 体重計の表示読み取りと同じ仕組み。エアロバイク・ランニングマシンなど、
+// ジムのマシンのコンソールに表示されている経過時間を読み取り、「時間(分)」欄に
+// 入れる。マシンのカロリー表示も読み取れれば参考として案内するが、記録される
+// カロリーはあくまでアプリのMET計算(他の運動種目・体重計と同じ式)を使う。
+//
+// 【安全策】読み取った値は入力欄に入れるだけで、記録はしない。
+// 利用者が数字を目視で確認して「＋ 記録する」を押して初めて保存される。
+const CARDIO_PHOTO_MAX_SIDE = 1280;
+const CARDIO_MINUTES_MAX = 300; // 5時間。これより長い値は読み取りミスとして採用しない
+let cardioPhotoBusy = false;
+function setCardioPhotoStatus_(text, isError) {
+  const el = document.getElementById("cardio-photo-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.style.color = isError ? "var(--coral)" : "";
+}
+function setCardioPhotoButtonBusy_(busy) {
+  const btn = document.getElementById("cardio-photo-btn");
+  if (!btn) return;
+  btn.disabled = busy;
+  btn.textContent = busy ? "読み取り中…" : "📷 マシンの表示を撮る";
+}
+async function handleCardioPhotoSelected(file) {
+  if (!file || cardioPhotoBusy) return;
+  if (!workerConfigured()) {
+    setCardioPhotoStatus_("⚠️ AI機能は現在ご利用いただけません。時間は手で入力してください。", true);
+    return;
+  }
+  cardioPhotoBusy = true;
+  setCardioPhotoButtonBusy_(true);
+  setCardioPhotoStatus_("🔄 AIが数値を読み取っています…(ネット接続が必要です)");
+  try {
+    const imageBase64 = await downscaleImage_(file, CARDIO_PHOTO_MAX_SIDE);
+    const data = await aiVision_(AI_PROMPTS.cardioMachine(), imageBase64, "image/jpeg", { json: true, maxTokens: 300 });
+    if (!data || data.status !== "ok" || !data.text) {
+      setCardioPhotoStatus_("⚠️ 読み取れませんでした: " + friendlyAiError_(data && data.message), true);
+      return;
+    }
+    const parsed = parseAiJson_(data.text);
+    if (!parsed) {
+      setCardioPhotoStatus_("⚠️ AIの応答を読み取れませんでした。もう一度撮るか、手で入力してください。", true);
+      return;
+    }
+    const mins = Number(parsed.minutes);
+    const dist = Number(parsed.distanceKm);
+    const cal = Number(parsed.caloriesShown);
+    const okMins = Number.isFinite(mins) && mins > 0 && mins <= CARDIO_MINUTES_MAX;
+    const okDist = Number.isFinite(dist) && dist > 0 && dist <= 300;
+    const okCal = Number.isFinite(cal) && cal > 0;
+    if (!okMins) {
+      setCardioPhotoStatus_("⚠️ 時間を読み取れませんでした。「TIME」の表示部分が画面いっぱいに入るように、明るい場所で撮り直してみてください。", true);
+      return;
+    }
+    const roundedMins = Math.round(mins);
+    const el = document.getElementById("minutes-input");
+    if (el) el.value = roundedMins;
+
+    const parts = [`時間 ${roundedMins}分`];
+    if (okDist) parts.push(`距離 ${round1_(dist).toFixed(1)}km`);
+    const calNote = okCal
+      ? ` (マシン表示のカロリーは${Math.round(cal)}kcalでしたが、他の運動種目と計算方法をそろえるため、アプリでは体重と時間からいつも通り計算します)`
+      : "";
+    setCardioPhotoStatus_(`✅ ${parts.join(" / ")} を読み取りました。数字が合っているか確認して「＋ 記録する」を押してください${calNote}`);
+  } catch (e) {
+    setCardioPhotoStatus_("⚠️ 通信エラーが発生しました: " + friendlyNetError_(e && e.message ? e.message : String(e)), true);
+  } finally {
+    cardioPhotoBusy = false;
+    setCardioPhotoButtonBusy_(false);
+  }
+}
+// 運動タブの「時間で入力」欄に差し込む、撮影ボタンの一式。
+function cardioPhotoRowHtml() {
+  return `
+    <input type="file" id="cardio-photo-input" accept="image/*" class="hidden">
+    <button type="button" class="chip active-b" id="cardio-photo-btn" data-action="take-cardio-photo" style="margin-bottom:4px;">📷 マシンの表示を撮る</button>
+    <p id="cardio-photo-status" class="muted" style="font-size:10.5px;margin:0 0 8px;line-height:1.6;"></p>`;
 }
 
 function photoCardHtml() {
@@ -2133,15 +2232,19 @@ function exerciseTargetNoteText_(t) {
 // 食べているのに基礎消費ぶん(1日あたり2000kcal前後)がまるごと赤字として積み上がり、
 // 累計が実態から大きく外れてしまうため(収支グラフ・平均アドバイスと同じ考え方)。
 // 何日ぶんを集計したかも返し、画面に併記して誤解が生じないようにする。
-function computeCalorieTotals() {
+// cutoff("YYYY-MM-DD")を渡すと、その日までの記録だけに絞って集計する(v1.17。
+// 「からだ」タブのSNSポスト作成で、基準日を「昨日」等に変えたときに使う)。
+// 省略時(今日タブのカード等、これまでの呼び出し)は全期間が対象で、挙動は変わらない。
+function computeCalorieTotals(cutoff) {
   const targets = getTargets();
   if (!targets) return null;
-  const latestWeight = [...weightEntries].sort((a,b) => a.date < b.date ? 1 : -1)[0];
+  const latestWeight = [...weightEntries].filter(w => !cutoff || w.date <= cutoff).sort((a,b) => a.date < b.date ? 1 : -1)[0];
   if (!latestWeight) return null;
   const weightKg = latestWeight.weight;
 
   const intakeByDate = {};
   mealEntries.forEach(m => {
+    if (cutoff && m.date > cutoff) return;
     const c = m.calories || 0;
     if (c <= 0) return;
     intakeByDate[m.date] = (intakeByDate[m.date] || 0) + c;
@@ -3243,27 +3346,33 @@ function renderMealHistory() {
 // 数字が食い違うことはない。
 
 // 3種類の文面すべてで使う材料をここでまとめて計算する。
-function computeShareStats_() {
-  const sortedAsc = [...weightEntries].sort((a,b) => a.date < b.date ? -1 : 1);
+// refDate(「YYYY-MM-DD」)を「今日」の代わりの基準日として扱う(v1.17)。「昨日」を
+// 選んだときは、基準日より後の記録(今日つけた分など)を除いて、その日の時点の
+// 内容でポストを作れる。省略時は実際の今日を基準にする。
+function computeShareStats_(refDate) {
+  const cutoff = refDate || localDateStr();
+  const sortedAsc = [...weightEntries].filter(w => w.date <= cutoff).sort((a,b) => a.date < b.date ? -1 : 1);
   if (sortedAsc.length === 0) return null;
   const start = sortedAsc[0], latest = sortedAsc[sortedAsc.length - 1];
   const hasTrend = sortedAsc.length >= 2 && start.date !== latest.date;
   const days = hasTrend ? Math.round((new Date(latest.date) - new Date(start.date)) / 86400000) + 1 : null;
   const diff = hasTrend ? round1_(latest.weight - start.weight) : null;
   // 体組成(体脂肪量)の内訳(v46)。開始時点(手入力の基準、なければ体脂肪率を
-  // 記録した最初の1件)と直近を比べられるときだけ差分つきで、体脂肪率しか
-  // まだないときは直近の値だけを添える。
-  const bodyComp = computeBodyComposition_();
-  // カロリーの内訳(v38)。その日の摂取・消費とその差に加えて、記録開始からの
-  // 累計収支も添える。プロフィール未入力などで消費カロリーを計算できない場合は
-  // null のままになる。
-  const today = localDateStr();
-  const todayIntake = mealEntries.filter(m => m.date === today).reduce((s,m) => s + (m.calories||0), 0);
+  // 記録した最初の1件)と基準日時点を比べられるときだけ差分つきで、体脂肪率しか
+  // まだないときは基準日時点の値だけを添える(いずれも基準日以前の記録に限る)。
+  const withBf = sortedAsc.filter(w => w.bodyFat != null && w.weight > 0);
+  const compOf_ = w => ({ date: w.date, weight: w.weight, bf: w.bodyFat,
+    fat: Math.round(w.weight * w.bodyFat / 100 * 10) / 10 });
+  const bodyComp = withBf.length ? { first: compOf_(withBf[0]), last: compOf_(withBf[withBf.length - 1]) } : { first: null, last: null };
+  // カロリーの内訳(v38)。基準日の摂取・消費とその差に加えて、記録開始から
+  // 基準日までの累計収支も添える。プロフィール未入力などで消費カロリーを
+  // 計算できない場合はnullのままになる。
+  const dayIntake = mealEntries.filter(m => m.date === cutoff).reduce((s,m) => s + (m.calories||0), 0);
   const targets = getTargets();
-  const todayBurn = (targets && latest) ? Math.round(targets.tdee + estimateExerciseBurnForDate(today, latest.weight)) : null;
-  const todayDiff = (todayBurn != null && todayIntake > 0) ? Math.round(todayIntake - todayBurn) : null;
-  const totals = computeCalorieTotals();
-  return { start, latest, hasTrend, days, diff, bodyComp, todayIntake, todayBurn, todayDiff, totals };
+  const dayBurn = (targets && latest) ? Math.round(targets.tdee + estimateExerciseBurnForDate(cutoff, latest.weight)) : null;
+  const dayDiff = (dayBurn != null && dayIntake > 0) ? Math.round(dayIntake - dayBurn) : null;
+  const totals = computeCalorieTotals(cutoff);
+  return { start, latest, hasTrend, days, diff, bodyComp, dayIntake, dayBurn, dayDiff, totals, refDate: cutoff };
 }
 
 // Xの1投稿の上限(280文字相当)に収まらなくなった場合に備え、渡した優先順で行を
@@ -3284,9 +3393,20 @@ function trimShareLines_(lines, dropPatternsInOrder) {
 // 対になる「増量記録 📈」「#増量記録」を使うようにしている(実際の変化(記録が
 // 2件以上あればその増減、無ければ目標との位置関係)から判定)。どちらとも
 // 言えない(変化なし・目標未設定)場合だけ、中立な「からだの記録 📊」にする。
-function buildPostVariations_() {
-  const s = computeShareStats_();
+// 基準日(refDate)を「今日」「昨日」のどちらで表現するかのラベル。それ以外の
+// 日付が渡ることは今のところ無いが、念のため日付そのものを添える形にしておく。
+function shareDayLabel_(dateStr) {
+  const today = localDateStr();
+  const yesterday = localDateStr(new Date(Date.now() - 86400000));
+  if (dateStr === today) return "今日";
+  if (dateStr === yesterday) return "昨日";
+  const d = new Date(dateStr + "T00:00:00");
+  return `${d.getMonth()+1}/${d.getDate()}`;
+}
+function buildPostVariations_(refDate) {
+  const s = computeShareStats_(refDate);
   if (!s) return null;
+  const dayLabel = shareDayLabel_(s.refDate);
   const trendDiff = s.hasTrend ? s.diff : (goals.weight ? s.latest.weight - goals.weight : 0);
   const title = trendDiff < 0 ? "ダイエット経過 📉" : trendDiff > 0 ? "増量記録 📈" : "からだの記録 📊";
   const hashtag = trendDiff < 0 ? "#ダイエット記録" : trendDiff > 0 ? "#増量記録" : "#からだの記録";
@@ -3310,12 +3430,12 @@ function buildPostVariations_() {
   }
   bodyLines.push(hashtag);
 
-  // ② カロリー収支: 今日の摂取・消費と、記録開始からの累計収支を中心にした文面。
-  // 材料(今日の食事記録・目標カロリー)が無い日は①と同じ内容にする。
-  const hasCalMaterial = (s.todayBurn != null && s.todayIntake > 0) || !!s.totals;
+  // ② カロリー収支: 基準日の摂取・消費と、記録開始から基準日までの累計収支を
+  // 中心にした文面。材料(その日の食事記録・目標カロリー)が無い日は①と同じ内容にする。
+  const hasCalMaterial = (s.dayBurn != null && s.dayIntake > 0) || !!s.totals;
   const calLines = [title];
-  if (s.todayBurn != null && s.todayIntake > 0) {
-    calLines.push(`今日: 摂取${Math.round(s.todayIntake).toLocaleString()} / 消費${s.todayBurn.toLocaleString()}kcal (${s.todayDiff >= 0 ? "+" : "−"}${Math.abs(s.todayDiff).toLocaleString()})`);
+  if (s.dayBurn != null && s.dayIntake > 0) {
+    calLines.push(`${dayLabel}: 摂取${Math.round(s.dayIntake).toLocaleString()} / 消費${s.dayBurn.toLocaleString()}kcal (${s.dayDiff >= 0 ? "+" : "−"}${Math.abs(s.dayDiff).toLocaleString()})`);
   } else {
     calLines.push(`体重: ${s.latest.weight}kg`);
   }
@@ -3330,16 +3450,20 @@ function buildPostVariations_() {
 
   return [
     { key: "body", label: "① からだ", text: trimShareLines_(bodyLines, [/^体脂肪/]) },
-    { key: "calorie", label: "② カロリー収支", text: hasCalMaterial ? trimShareLines_(calLines, [/^今日: |^累計収支: /]) : trimShareLines_(bodyLines, [/^体脂肪/]) },
+    { key: "calorie", label: "② カロリー収支", text: hasCalMaterial ? trimShareLines_(calLines, [new RegExp(`^${dayLabel}: |^累計収支: `)]) : trimShareLines_(bodyLines, [/^体脂肪/]) },
     { key: "simple", label: "③ シンプル", text: simpleLines.join("\n") },
   ];
 }
 
+// selectedPostDateModeから実際の基準日("YYYY-MM-DD")を組み立てる。
+function postRefDate_() {
+  return selectedPostDateMode === "yesterday" ? localDateStr(new Date(Date.now() - 86400000)) : localDateStr();
+}
 // SNSへの投稿。対応端末ではOS標準の共有シート(Web Share API)を開き、その場で
 // 送り先(X、Bluesky、LINE、メールなど)を選べるようにする。非対応の環境
 // (主にPC)ではXの投稿画面を開く。
 function openSharePost() {
-  const variations = buildPostVariations_();
+  const variations = buildPostVariations_(postRefDate_());
   if (!variations) return;
   const chosen = variations[selectedPostVariation] || variations[0];
   if (navigator.share) {
@@ -3356,7 +3480,7 @@ function weightHtml() {
   const latest = sortedDesc[0];
   const remaining = latest ? weightGoalRemaining_(latest.weight, goals.weight) : null;
   const points = sortedAsc.map(w => ({ date: w.date, value: w.weight }));
-  const postVariations = buildPostVariations_();
+  const postVariations = buildPostVariations_(postRefDate_());
   // 直近7日間だけに絞って表示する(v1.13)。それより前の体重記録は「カレンダー」タブから
   // 日付を選べば見られる。
   const weightCutoff = recentDaysCutoff_(7);
@@ -3470,6 +3594,11 @@ function weightHtml() {
     <div class="card">
       <p class="section-title">📤 SNSにポストを作成</p>
       ${postVariations ? `
+      <p class="muted" style="font-size:11px;margin:0 0 6px;">基準日を選べます(今日つけた記録より前の日で投稿したいとき用)</p>
+      <div class="wrap" id="post-date-buttons" style="margin-bottom:10px;">
+        <button type="button" class="chip ${selectedPostDateMode==="today"?"active":""}" data-action="select-post-date" data-val="today">今日</button>
+        <button type="button" class="chip ${selectedPostDateMode==="yesterday"?"active":""}" data-action="select-post-date" data-val="yesterday">昨日</button>
+      </div>
       <p class="muted" style="font-size:11px;margin:0 0 6px;">文面を3種類から選べます</p>
       <div class="wrap" id="post-variation-buttons" style="margin-bottom:8px;">
         ${postVariations.map((v,i) => `<button type="button" class="chip ${selectedPostVariation===i?"active":""}" data-action="select-post-variation" data-idx="${i}">${esc(v.label)}</button>`).join("")}
@@ -3558,6 +3687,7 @@ function trainingHtml() {
           <label class="label">種目</label>
           <div class="wrap" id="cardio-buttons" style="margin-bottom:8px;"></div>
           <input type="text" id="cardio-custom-input" placeholder="種目名を入力" class="hidden" style="margin-bottom:8px;">
+          ${cardioPhotoRowHtml()}
           <label class="label">時間 (分)</label>
           <input type="number" id="minutes-input" placeholder="分" class="mono" style="margin-bottom:8px;">
           <div class="wrap" id="minutes-quick-buttons" style="margin-bottom:10px;"></div>
@@ -5058,20 +5188,34 @@ document.getElementById("app").addEventListener("click", (e) => {
     const el = document.getElementById("scale-photo-input");
     if (el) el.click();
   }
+  else if (action === "take-cardio-photo") {
+    const el = document.getElementById("cardio-photo-input");
+    if (el) el.click();
+  }
   else if (action === "add-meal") { handleAddMeal(); }
   else if (action === "add-weight") { handleAddWeight(); }
   else if (action === "open-share-post") { openSharePost(); }
+  else if (action === "select-post-date") {
+    selectedPostDateMode = t.dataset.val;
+    document.querySelectorAll("#post-date-buttons .chip").forEach(c => c.classList.toggle("active", c.dataset.val === selectedPostDateMode));
+    const variations = buildPostVariations_(postRefDate_());
+    if (!variations) { renderTabContent(); return; } // 基準日の記録が無いときは表示ごと作り直す(未記録の案内に切り替える)
+    const ta = document.getElementById("x-share-text");
+    if (ta) ta.value = (variations[selectedPostVariation] || variations[0]).text;
+    const statusEl1 = document.getElementById("x-share-status");
+    if (statusEl1) statusEl1.textContent = "";
+  }
   else if (action === "select-post-variation") {
     selectedPostVariation = Number(t.dataset.idx);
     document.querySelectorAll("#post-variation-buttons .chip").forEach(c => c.classList.toggle("active", Number(c.dataset.idx) === selectedPostVariation));
-    const variations = buildPostVariations_();
+    const variations = buildPostVariations_(postRefDate_());
     const ta = document.getElementById("x-share-text");
     if (ta && variations && variations[selectedPostVariation]) ta.value = variations[selectedPostVariation].text;
     const statusEl0 = document.getElementById("x-share-status");
     if (statusEl0) statusEl0.textContent = "";
   }
   else if (action === "copy-x-share") {
-    const variations = buildPostVariations_();
+    const variations = buildPostVariations_(postRefDate_());
     const text = variations ? (variations[selectedPostVariation] || variations[0]).text : null;
     const statusEl = document.getElementById("x-share-status");
     if (!text) return;
@@ -5375,6 +5519,12 @@ document.getElementById("app").addEventListener("change", (e) => {
     const f = e.target.files[0];
     e.target.value = "";
     handleScalePhotoSelected(f);
+    return;
+  }
+  if (e.target.id === "cardio-photo-input" && e.target.files && e.target.files[0]) {
+    const f = e.target.files[0];
+    e.target.value = "";
+    handleCardioPhotoSelected(f);
     return;
   }
   if (e.target.id === "import-file-input" && e.target.files && e.target.files[0]) {
