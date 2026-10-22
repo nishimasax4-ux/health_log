@@ -1,6 +1,6 @@
 /**
  * ヘルスログ - AI中継サーバー(Cloudflare Workers版)
- * バージョン: v1.22 (index.html・sw.js・README.mdと揃えています。対応するアプリ側の
+ * バージョン: v1.25 (index.html・sw.js・README.mdと揃えています。対応するアプリ側の
  *   バージョンより古くても、未対応のpresetは自動でnutrition設定にフォールバックする
  *   ため大きな問題にはなりませんが、再デプロイすると新機能がフルに使えます)
  *

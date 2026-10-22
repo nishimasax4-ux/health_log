@@ -1,4 +1,4 @@
-<!-- ヘルスログ バージョン: v1.22(設定タブ下部にも同じ番号が表示されます。更新のたびに
+<!-- ヘルスログ バージョン: v1.25(設定タブ下部にも同じ番号が表示されます。更新のたびに
      ここと下のAPP_VERSION、sw.jsのVERSION、README.mdの版数表記を揃えて上げてください) -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -173,7 +173,7 @@ const WORKER_URL = "https://health-log-ai.nishimasax4.workers.dev";
 const WORKER_TOKEN = "hS4%IpejF6842XppRBJz";
 function workerConfigured() { return !!WORKER_URL; }
 // アプリのバージョン番号。更新のたびに増やし、設定タブ下部に表示します。
-const APP_VERSION = "v1.22";
+const APP_VERSION = "v1.25";
 
 const STORAGE_KEY = "health-log-data";
 const PARTS = ["胸","背中","脚","肩","腕","腹筋"];
@@ -451,6 +451,9 @@ let mealEntries = [];
 let goals = { weight: 65, weeklyFreq: 3, paceKgPerWeek: 0.5, goalType: "weight" };
 let profile = null; // null until onboarding completes: {age, gender, height, lifestyle}
 let moodByDate = {};
+// 「カレンダー」タブの日ごとのコメント(v1.25)。date -> 自由入力のメモ文字列。
+// その日に運動・食事などの記録が何も無くても書き込める(体調や出来事のメモ用途)。
+let dayComments = {};
 let exerciseMaster = []; // {id, part, name} - user-editable list of gym machines/exercises per body part
 let mealMaster = [];     // {id, name, calories, protein, fat, carb} - user-editable list of frequently-eaten meals
 let lastStrengthByExercise = {}; // "種目名"(または"(部位)") -> {reps, weight} の直近の入力値。次回そのままの値を提案する
@@ -490,6 +493,9 @@ let expandedBodyParts = new Set();
 let activeTravelRouteId = null;
 let travelRouteBaselineKm = 0;
 let travelChooserOpen = false;
+// 「📐 実測ベースのTDEE推定」機能(v1.23)。正確な記録が前提の機能なので、
+// 既定はオフ(選択制)で、設定画面のチップでオン/オフを切り替える(v1.24)。
+let tdeeEstimateEnabled = false;
 // 「カレンダー」タブ(v1.13)で表示中の月・選択中の日付。運動・食事・体重・ストレッチの
 // 全データがここ1か所から辿れるので、状態も1つだけ持てばよい。
 let calMonth = (() => { const d = new Date(); d.setDate(1); d.setHours(0,0,0,0); return d; })();
@@ -1205,6 +1211,7 @@ function loadState() {
       // (消費カロリーの土台をこの項目で計算するようになったため。運動ぶんは記録から別途加算)
       if (profile && !profile.lifestyle) profile.lifestyle = DEFAULT_LIFESTYLE;
       moodByDate = data.moodByDate || {};
+      dayComments = data.dayComments || {};
       exerciseMaster = data.exerciseMaster || [];
       mealMaster = data.mealMaster || [];
       cardioMaster = data.cardioMaster || [];
@@ -1215,6 +1222,7 @@ function loadState() {
       stretchLog = data.stretchLog || {};
       activeTravelRouteId = data.activeTravelRouteId || null;
       travelRouteBaselineKm = Number(data.travelRouteBaselineKm) || 0;
+      tdeeEstimateEnabled = !!data.tdeeEstimateEnabled;
     }
   } catch (e) {
     // 保存内容が壊れていた場合、ここで黙って初期状態に戻すと「まっさらな新規状態」として
@@ -1236,7 +1244,7 @@ function seedExerciseMasterIfEmpty() {
 }
 function saveState() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ entries, weightEntries, mealEntries, goals, profile, moodByDate, exerciseMaster, mealMaster, cardioMaster, houseworkMaster, lastStrengthByExercise, lastCardioMinutes, lastHouseworkMinutes, stretchLog, activeTravelRouteId, travelRouteBaselineKm }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ entries, weightEntries, mealEntries, goals, profile, moodByDate, dayComments, exerciseMaster, mealMaster, cardioMaster, houseworkMaster, lastStrengthByExercise, lastCardioMinutes, lastHouseworkMinutes, stretchLog, activeTravelRouteId, travelRouteBaselineKm, tdeeEstimateEnabled }));
     // 直前まで保存できていなかった場合は、復旧したことを警告表示にも反映する。
     if (storageWriteFailed) { storageWriteFailed = false; renderDataWarning(); }
   } catch (e) {
@@ -2425,9 +2433,9 @@ function exportJson() {
   try {
     const dump = {
       app: "health-log", version: APP_VERSION, exportedAt: new Date().toISOString(),
-      entries, weightEntries, mealEntries, goals, profile, moodByDate,
+      entries, weightEntries, mealEntries, goals, profile, moodByDate, dayComments,
       exerciseMaster, mealMaster, cardioMaster, houseworkMaster, lastStrengthByExercise, lastCardioMinutes, lastHouseworkMinutes,
-      stretchLog, activeTravelRouteId, travelRouteBaselineKm,
+      stretchLog, activeTravelRouteId, travelRouteBaselineKm, tdeeEstimateEnabled,
     };
     const blob = new Blob([JSON.stringify(dump, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -2498,6 +2506,17 @@ function sanitizeImported_(data) {
   } else {
     data.moodByDate = {};
   }
+  // dayComments: "日付" -> コメント文字列(v1.25)。空文字になったものは持たない。
+  if (data.dayComments && typeof data.dayComments === "object" && !Array.isArray(data.dayComments)) {
+    const cleanedComments = {};
+    Object.keys(data.dayComments).forEach(k => {
+      const v = safeStr_(data.dayComments[k]);
+      if (v) cleanedComments[safeStr_(k)] = v;
+    });
+    data.dayComments = cleanedComments;
+  } else {
+    data.dayComments = {};
+  }
   // stretchLog: "日付" -> [ストレッチ項目ID, ...]。既知の項目IDだけを残し、
   // 壊れた/細工されたデータが入っていても表示や連続記録の判定に影響しないようにする。
   const knownStretchIds = new Set(STRETCH_ITEMS.map(i => i.id));
@@ -2517,6 +2536,7 @@ function sanitizeImported_(data) {
   const knownTravelRouteIds = new Set(TRAVEL_ROUTES.map(r => r.id));
   data.activeTravelRouteId = knownTravelRouteIds.has(data.activeTravelRouteId) ? data.activeTravelRouteId : null;
   data.travelRouteBaselineKm = safeNum_(data.travelRouteBaselineKm) || 0;
+  data.tdeeEstimateEnabled = !!data.tdeeEstimateEnabled;
   return data;
 }
 function importJsonFile(file) {
@@ -2538,6 +2558,7 @@ function importJsonFile(file) {
       // (消費カロリーの土台をこの項目で計算するようになったため。運動ぶんは記録から別途加算)
       if (profile && !profile.lifestyle) profile.lifestyle = DEFAULT_LIFESTYLE;
       moodByDate = data.moodByDate || {};
+      dayComments = data.dayComments || {};
       exerciseMaster = data.exerciseMaster || [];
       mealMaster = data.mealMaster || [];
       cardioMaster = data.cardioMaster || [];
@@ -2547,6 +2568,7 @@ function importJsonFile(file) {
       lastHouseworkMinutes = data.lastHouseworkMinutes || {};
       activeTravelRouteId = data.activeTravelRouteId || null;
       travelRouteBaselineKm = Number(data.travelRouteBaselineKm) || 0;
+      tdeeEstimateEnabled = !!data.tdeeEstimateEnabled;
       seedExerciseMasterIfEmpty();
       selectedCardio = defaultCardio(); // 取り込んだ記録に合わせて初期選択を更新する(v38)
       saveState();
@@ -2691,6 +2713,108 @@ function movingAverage_(points, days) {
     }
     return { date: p.date, value: n ? sum / n : p.value };
   });
+}
+// 日付文字列("YYYY-MM-DD")にn日を足し引きする(タイムゾーンのずれを避けるため
+// "T00:00:00"を付けてから計算する)。
+function addDaysStr_(dateStr, delta) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + delta);
+  return localDateStr(d);
+}
+
+// ---- 実測ベースのTDEE推定(v1.23) ----
+// 体重の増減と、実際に記録した摂取カロリーから、本当の消費カロリー(TDEE)を逆算する。
+//   TDEE = 期間の平均摂取カロリー − (期間中の体重の増減kg × FAT_KCAL_PER_KG) ÷ 日数
+// 体重は水分などで日々大きく上下するため、両端の値は7日移動平均(movingAverage_、
+// 体重グラフと同じ考え方)を使う。これにより、ある1日だけ体重が多い/少ないことの
+// 影響を受けにくくする。
+// 「長め(さかのぼれる限り)」と「その半分程度の直近期間」の2つの期間で計算し、
+// 両者が近ければより信頼できる値、大きくずれていれば記録にムラがある可能性が高い
+// ——とクロスチェックできるようにしている(手計算で同じことをしたときの考え方を踏襲)。
+const TDEE_ESTIMATE_MAX_WEEKS = 10; // これより長くさかのぼらない(今の体型と合わなくなるため)
+const TDEE_ESTIMATE_MIN_WEEKS = 3;  // これより短い期間では推定しない(誤差が大きすぎる)
+const TDEE_ESTIMATE_MIN_COVERAGE = 0.8; // 期間中、食事を記録した日の割合がこれ未満なら推定しない
+// 指定した期間(startDate〜endDate)でのTDEEを1つ計算する。両端近くに体重記録が
+// 無い、または期間中の食事記録のカバー率が低い場合はnullを返す(信頼できないため)。
+function tdeeEstimateWindow_(smoothedPoints, startDate, endDate) {
+  const nearPoint_ = (d) => {
+    const targetMs = new Date(d + "T00:00:00").getTime();
+    let best = null, bestDiff = Infinity;
+    smoothedPoints.forEach(p => {
+      const diff = Math.abs(new Date(p.date + "T00:00:00").getTime() - targetMs);
+      if (diff < bestDiff) { bestDiff = diff; best = p; }
+    });
+    return bestDiff <= 3 * 86400000 ? best : null;
+  };
+  const startPoint = nearPoint_(startDate), endPoint = nearPoint_(endDate);
+  if (!startPoint || !endPoint) return null;
+  const days = Math.round((new Date(endDate + "T00:00:00") - new Date(startDate + "T00:00:00")) / 86400000);
+  if (days < TDEE_ESTIMATE_MIN_WEEKS * 7 - 2) return null;
+  const daySet = new Set();
+  let totalCal = 0;
+  mealEntries.forEach(m => {
+    if (m.date >= startDate && m.date <= endDate) { totalCal += (m.calories || 0); daySet.add(m.date); }
+  });
+  const coverage = days > 0 ? daySet.size / days : 0;
+  if (coverage < TDEE_ESTIMATE_MIN_COVERAGE) return null;
+  const avgIntake = totalCal / days;
+  const weightChangeKg = endPoint.value - startPoint.value;
+  const tdee = avgIntake - (weightChangeKg * FAT_KCAL_PER_KG) / days;
+  return { startDate, endDate, days, avgIntake: Math.round(avgIntake), weightChangeKg: round1_(weightChangeKg), tdee: Math.round(tdee) };
+}
+// 設定タブの「📐 実測ベースのTDEE推定」カード。targetsは計算式ベースの目標値
+// (比較のため、分かれば併記する。無くても推定自体は計算できる)。
+// 体重・食事を正確に記録していないと誤った値が出てしまう機能のため、既定はオフ。
+// カード自体は常に表示し、オン/オフはチップで切り替える(v1.24)。
+function estimatedTdeeHtml(targets) {
+  const header = '<p class="section-title">📐 実測ベースのTDEE推定</p>';
+  const toggleHtml = `<div style="display:flex;gap:6px;margin:0 0 8px;">
+    <button type="button" class="chip ${!tdeeEstimateEnabled ? "active" : ""}" data-action="set-tdee-estimate-enabled" data-val="0">オフ</button>
+    <button type="button" class="chip ${tdeeEstimateEnabled ? "active" : ""}" data-action="set-tdee-estimate-enabled" data-val="1">オン</button>
+  </div>`;
+  if (!tdeeEstimateEnabled) {
+    return `<div class="card">
+      ${header}
+      ${toggleHtml}
+      <p class="muted" style="font-size:11px;margin:0;line-height:1.6;">体重と食事の記録が正確でないと実際の消費カロリーとずれた値が出てしまうため、既定ではオフにしています。記録を欠かさずつけられている場合は「オン」にすると、記録の実績から逆算したTDEEの推定値が表示されます。</p>
+    </div>`;
+  }
+  const sortedAscW = [...weightEntries].sort((a,b) => a.date < b.date ? -1 : 1);
+  const needMoreDataMsg = (msg) => `<div class="card">${header}${toggleHtml}<p class="muted" style="font-size:11px;margin:0;line-height:1.6;">${msg}</p></div>`;
+  if (sortedAscW.length < 2) {
+    return needMoreDataMsg(`体重と食事の記録を${TDEE_ESTIMATE_MIN_WEEKS}週間ぶんほど(できるだけ毎日)続けると、記録の実績から実際の消費カロリー(TDEE)を逆算して表示します。`);
+  }
+  const weightPoints = sortedAscW.map(w => ({ date: w.date, value: w.weight }));
+  const smoothedPoints = movingAverage_(weightPoints, 7);
+  const endDate = sortedAscW[sortedAscW.length - 1].date;
+  const earliestDate = sortedAscW[0].date;
+  const spanDays = Math.round((new Date(endDate + "T00:00:00") - new Date(earliestDate + "T00:00:00")) / 86400000);
+  const maxWeeks = Math.min(TDEE_ESTIMATE_MAX_WEEKS, Math.floor(spanDays / 7));
+  if (maxWeeks < TDEE_ESTIMATE_MIN_WEEKS) {
+    return needMoreDataMsg(`体重の記録期間がまだ${TDEE_ESTIMATE_MIN_WEEKS}週間に届いていません。記録を続けると、ここに実測ベースのTDEE推定が表示されます。`);
+  }
+  const longWeeks = maxWeeks;
+  const shortWeeks = Math.max(TDEE_ESTIMATE_MIN_WEEKS, Math.round(longWeeks / 2));
+  const longEst = tdeeEstimateWindow_(smoothedPoints, addDaysStr_(endDate, -longWeeks * 7), endDate);
+  const shortEst = shortWeeks < longWeeks ? tdeeEstimateWindow_(smoothedPoints, addDaysStr_(endDate, -shortWeeks * 7), endDate) : null;
+  if (!longEst) {
+    return needMoreDataMsg(`体重か食事の記録に抜けが多く、まだ推定できません(期間のうち${Math.round(TDEE_ESTIMATE_MIN_COVERAGE*100)}%以上の日に食事を記録すると計算できるようになります)。`);
+  }
+  const estimates = [longEst, shortEst].filter(Boolean);
+  const avgTdee = Math.round(estimates.reduce((s,e) => s + e.tdee, 0) / estimates.length);
+  const spread = estimates.length > 1 ? Math.abs(estimates[0].tdee - estimates[1].tdee) : 0;
+  const rowHtml = (e, label) => `<p class="muted" style="font-size:10.5px;margin:0 0 4px;line-height:1.6;">${label}(${e.startDate}〜${e.endDate}・${e.days}日間): 平均摂取${e.avgIntake}kcal、体重${e.weightChangeKg > 0 ? "+" : ""}${e.weightChangeKg}kg → TDEE <span class="mono">${e.tdee}</span>kcal</p>`;
+  const compareHtml = targets ? `<p class="muted" style="font-size:10.5px;margin:4px 0 0;">(参考: 計算式ベースの基礎消費は<span class="mono">${targets.tdee}</span>kcal)</p>` : "";
+  return `<div class="card">
+    ${header}
+    ${toggleHtml}
+    <p style="font-size:22px;font-weight:700;margin:0 0 6px;">${avgTdee}<span style="font-size:12px;font-weight:400;" class="muted">kcal/日</span></p>
+    ${rowHtml(longEst, "長め")}
+    ${shortEst ? rowHtml(shortEst, "直近") : ""}
+    ${compareHtml}
+    ${spread >= 150 ? `<p style="font-size:10.5px;margin:6px 0 0;color:var(--coral);line-height:1.6;">2つの期間の推定に${spread}kcalほど差があります。体重や食事の記録にムラがあると振れやすいので、参考値として見てください。</p>` : ""}
+    <p class="muted" style="font-size:10px;margin:8px 0 0;line-height:1.6;">体重の増減(体脂肪1kg≒${FAT_KCAL_PER_KG}kcalで換算)と、実際の摂取カロリーの記録から逆算した値です。水分量の変動・体組成計の誤差・記録の抜けの影響を受けるため、あくまで目安として見てください。</p>
+  </div>`;
 }
 function topRoundedPath(x,y,width,height,r) {
   if (height<=0) return "";
@@ -4028,6 +4152,8 @@ function calendarGridHtml() {
   const mealDates = new Set(mealEntries.map(m => m.date));
   // ストレッチの印(v1.13): その日にチェックした項目が1つでもあれば印を付ける。
   const stretchDates = new Set(Object.keys(stretchLog).filter(d => (stretchLog[d] || []).length > 0));
+  // コメントの印(v1.25): その日にコメントが書かれていれば印を付ける。
+  const commentDates = new Set(Object.keys(dayComments).filter(d => dayComments[d]));
   let cells = "";
   for (let i = 0; i < startWeekday; i++) cells += `<div class="cal-cell" style="visibility:hidden;"></div>`;
   for (let d = 1; d <= daysInMonth; d++) {
@@ -4037,6 +4163,7 @@ function calendarGridHtml() {
     if (weightDates.has(dateStr)) dots.push('<div class="cal-dot" style="background:var(--sand);"></div>');
     if (mealDates.has(dateStr)) dots.push('<div class="cal-dot" style="background:var(--teal);"></div>');
     if (stretchDates.has(dateStr)) dots.push('<div class="cal-dot" style="background:var(--slate);"></div>');
+    if (commentDates.has(dateStr)) dots.push('<div class="cal-dot" style="background:var(--ink-faint);"></div>');
     cells += `<div class="cal-cell ${dateStr===todayStr?"today":""} ${dateStr===selectedCalDate?"selected":""}" data-action="select-day" data-date="${dateStr}">
       <span>${d}</span><div class="cal-dots">${dots.join("")}</div>
     </div>`;
@@ -4106,6 +4233,20 @@ function dayDashboardKpiHtml_(dateStr, dayEntries, dayWeight, dayMeals, dayStret
     : "";
   return `<div class="kpi-grid" style="margin:10px 0 0;">${intakeTile}${burnTile}${weightTile}${stretchTile}</div>${exerciseNote}`;
 }
+// その日のコメント(メモ)欄(v1.25)。記録の有無にかかわらず、どの日付にも書き込める。
+// 自由入力なので、他の入力欄と同じく<textarea>の値はdata-actionのボタンを押した時点で
+// 読みに行く(入力ごとに保存すると、連続して文字を打っている最中に再描画がちらつくため)。
+function dayCommentHtml_(dateStr) {
+  const text = dayComments[dateStr] || "";
+  return `<div style="margin-top:12px;">
+    <p class="label" style="margin:0 0 4px;">📝 コメント</p>
+    <textarea id="day-comment-input" rows="3" placeholder="この日の体調・出来事など、自由にメモできます" style="margin-bottom:6px;">${esc(text)}</textarea>
+    <div class="row" style="gap:8px;">
+      <button type="button" class="chip active-b" data-action="save-day-comment" data-date="${dateStr}">💾 保存</button>
+      ${text ? `<button type="button" class="chip" data-action="clear-day-comment" data-date="${dateStr}">🗑️ 削除</button>` : ""}
+    </div>
+  </div>`;
+}
 function dayDetailHtml(dateStr) {
   const dd = new Date(dateStr + "T00:00:00");
   const dayEntries = entries.filter(e => e.date === dateStr);
@@ -4113,8 +4254,9 @@ function dayDetailHtml(dateStr) {
   const dayMeals = mealEntries.filter(m => m.date === dateStr);
   const dayStretchIds = stretchLog[dateStr] || [];
   const header = `<p class="mono" style="font-weight:700;font-size:13px;margin:14px 0 6px;">${dateStr}(${WEEKDAY[dd.getDay()]})</p>`;
+  const commentHtml = dayCommentHtml_(dateStr);
   if (dayEntries.length === 0 && !dayWeight && dayMeals.length === 0 && dayStretchIds.length === 0) {
-    return header + '<p class="muted" style="font-size:12px;">この日の記録はありません。</p>';
+    return header + '<p class="muted" style="font-size:12px;">この日の記録はありません。</p>' + commentHtml;
   }
   // ダッシュボード(v1.14): KPIタイル4枚 + (食事の記録があれば)P/F/Cの達成度メーター。
   // 「今日」「食事」タブと同じ見た目・同じ計算式を使い、選んだ日の状況をひと目で
@@ -4141,7 +4283,7 @@ function dayDetailHtml(dateStr) {
         <div class="muted" style="font-size:11px;margin-top:2px;line-height:1.6;">${dayStretchIds.map(id => { const item = STRETCH_ITEMS.find(x => x.id === id); return esc(item ? item.label : id); }).join("・")}</div>
       </div>
     </div>` : "";
-  return header + dashboard + `<div style="margin-top:12px;">${trainingRows}${weightRow}${mealRows}${stretchRow}</div>`;
+  return header + dashboard + `<div style="margin-top:12px;">${trainingRows}${weightRow}${mealRows}${stretchRow}</div>` + commentHtml;
 }
 // ============ カレンダータブ(v1.13・要望⑧) ============
 // 「今日」「食事」「からだ」「運動」「ストレッチ」の各タブは直近7日間だけに絞って
@@ -4152,7 +4294,7 @@ function calendarTabHtml() {
   return `
     <div class="card">
       <p class="section-title" style="margin:0 0 4px;">📅 カレンダー(全記録)</p>
-      <p class="muted" style="font-size:10.5px;margin:0 0 8px;line-height:1.6;">印: 🔴運動 / 🟡体重 / 🔵食事 / 🟣ストレッチ。日付をタップすると、その日のダッシュボード(摂取・消費カロリー・体重・ストレッチのKPIと、記録の明細)が下に表示されます。各タブの履歴は直近7日間だけの表示にしているので、それより前の記録はここから確認できます。</p>
+      <p class="muted" style="font-size:10.5px;margin:0 0 8px;line-height:1.6;">印: 🔴運動 / 🟡体重 / 🔵食事 / 🟣ストレッチ / ⚪コメント。日付をタップすると、その日のダッシュボード(摂取・消費カロリー・体重・ストレッチのKPIと、記録の明細)が下に表示されます。その日のコメント(メモ)も、記録の有無にかかわらず書き込めます。各タブの履歴は直近7日間だけの表示にしているので、それより前の記録はここから確認できます。</p>
       ${calendarGridHtml()}
       <div id="calendar-day-detail">${dayDetailHtml(selectedCalDate)}</div>
     </div>`;
@@ -4491,6 +4633,8 @@ function settingsHtml() {
           : '<p class="muted" style="font-size:11px;margin:0;">年齢・身長と、からだタブでの体重記録がそろうと、AIが1日の目標カロリー・栄養バランスを計算します。</p>'}
       </div>
     </div>
+
+    ${estimatedTdeeHtml(targets)}
 
     <div class="card">
       ${settingsSectionHeader("masterExercise", "🏋️ 種目マスタ")}
@@ -5310,6 +5454,19 @@ document.getElementById("app").addEventListener("click", (e) => {
   else if (action === "cal-prev") { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth()-1, 1); renderTabContent(); }
   else if (action === "cal-next") { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth()+1, 1); renderTabContent(); }
   else if (action === "select-day") { selectedCalDate = t.dataset.date; renderTabContent(); }
+  else if (action === "save-day-comment") {
+    const date = t.dataset.date;
+    const ta = document.getElementById("day-comment-input");
+    const text = ta ? ta.value.trim() : "";
+    if (text) dayComments[date] = text; else delete dayComments[date];
+    saveState();
+    renderTabContent();
+  }
+  else if (action === "clear-day-comment") {
+    delete dayComments[t.dataset.date];
+    saveState();
+    renderTabContent();
+  }
   else if (action === "select-meal-type") {
     selectedMealType = t.dataset.val;
     document.querySelectorAll("#meal-type-buttons .chip").forEach(c => c.classList.toggle("active", c.dataset.val === t.dataset.val));
@@ -5493,6 +5650,11 @@ document.getElementById("app").addEventListener("click", (e) => {
     travelChooserOpen = !travelChooserOpen;
     renderTabContent();
   }
+  else if (action === "set-tdee-estimate-enabled") {
+    tdeeEstimateEnabled = t.dataset.val === "1";
+    saveState();
+    renderTabContent();
+  }
   else if (action === "add-meal-master") {
     const nameInp = document.getElementById("master-meal-name-input");
     const name = nameInp.value.trim();
@@ -5612,7 +5774,7 @@ document.getElementById("app").addEventListener("click", (e) => {
   else if (action === "reset-no") { confirmReset = false; renderTabContent(); }
   else if (action === "reset-yes-keep-sheet") {
     entries = []; weightEntries = []; mealEntries = []; goals = { weight: 65, weeklyFreq: 3, paceKgPerWeek: DEFAULT_PACE, goalType: DEFAULT_GOAL_TYPE };
-    profile = null; moodByDate = {}; confirmReset = false; onboardStep = 0;
+    profile = null; moodByDate = {}; dayComments = {}; confirmReset = false; onboardStep = 0;
     exerciseMaster = []; mealMaster = []; cardioMaster = []; houseworkMaster = []; masterExercisePart = "胸";
     masterCardioEditingId = null; masterHouseworkEditingId = null;
     masterCardioIntensityKey = DEFAULT_ACTIVITY_INTENSITY; masterHouseworkIntensityKey = DEFAULT_ACTIVITY_INTENSITY;
@@ -5620,6 +5782,7 @@ document.getElementById("app").addEventListener("click", (e) => {
     masterHouseworkMet = ACTIVITY_INTENSITY_LEVELS.find(l => l.key === DEFAULT_ACTIVITY_INTENSITY).met;
     lastStrengthByExercise = {}; lastCardioMinutes = {}; lastHouseworkMinutes = {}; stretchLog = {}; mealDetailOpen = false;
     activeTravelRouteId = null; travelRouteBaselineKm = 0; travelChooserOpen = false;
+    tdeeEstimateEnabled = false;
     entryDates = { meal: null, weight: null, training: null };
     nutritionCache = {}; saveNutritionCache();
     activityMetCache = {}; saveActivityMetCache();
